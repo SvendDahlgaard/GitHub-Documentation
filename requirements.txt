@@ -1,0 +1,2 @@
+# requirements.txt
+anthropic>=0.8.0
