@@ -10,6 +10,9 @@ from collections import defaultdict
 import logging
 import re
 
+# Load environment variables from .env file
+load_dotenv()
+
 # Set up logging
 logging.basicConfig(
     level=logging.INFO,
@@ -49,7 +52,7 @@ I need you to use the GitHub MCP server's {tool} tool with these arguments:
 ```json
 {json.dumps(args, indent=2)}
 ```
-
+My GitHub token is: {os.getenv('GITHUB_TOKEN')}
 Please only return the raw JSON response from the tool without any additional text.
 """
             temp_file.write(command_text)
@@ -541,27 +544,27 @@ def analyze_repository(args):
         logger.error(f"Error: {e}")
         sys.exit(1)
     
-    @staticmethod
-    def _extract_key_points(text, max_points=5):
-        """Extract key points from analysis for context."""
-        # Simple extraction of sentences with key indicators
-        key_sentences = []
-        sentences = re.split(r'(?<=[.!?])\s+', text)
-        
-        # Look for sentences with indicators of importance
-        indicators = ['main', 'primary', 'key', 'core', 'critical', 'essential', 'important']
-        for sentence in sentences:
-            if any(indicator in sentence.lower() for indicator in indicators):
-                key_sentences.append(sentence)
-                
-            if len(key_sentences) >= max_points:
-                break
-                
-        # If not enough key sentences found, take first few sentences
-        if len(key_sentences) < 3:
-            key_sentences = sentences[:5]
+#@staticmethod
+def _extract_key_points(text, max_points=5):
+    """Extract key points from analysis for context."""
+    # Simple extraction of sentences with key indicators
+    key_sentences = []
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+    
+    # Look for sentences with indicators of importance
+    indicators = ['main', 'primary', 'key', 'core', 'critical', 'essential', 'important']
+    for sentence in sentences:
+        if any(indicator in sentence.lower() for indicator in indicators):
+            key_sentences.append(sentence)
             
-        return " ".join(key_sentences)
+        if len(key_sentences) >= max_points:
+            break
+            
+    # If not enough key sentences found, take first few sentences
+    if len(key_sentences) < 3:
+        key_sentences = sentences[:5]
+        
+    return " ".join(key_sentences)
 
 def main():
     parser = argparse.ArgumentParser(description="Analyze a GitHub repository by sections using MCP and Claude")
