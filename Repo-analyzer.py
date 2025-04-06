@@ -9,6 +9,7 @@ from typing import List, Dict, Any, Tuple, Set
 from collections import defaultdict
 import logging
 import re
+from dotenv import load_dotenv
 
 # Load environment variables from .env file
 load_dotenv()
@@ -525,7 +526,7 @@ def analyze_repository(args):
             # Update context for next section (truncated to avoid too much context)
             if args.use_context:
                 # Extract key points for context (just a simple approach)
-                key_points = self._extract_key_points(analysis)
+                key_points = key_points = _extract_key_points(analysis)
                 context += f"\n\nSection '{section_name}':\n{key_points}\n"
                 # Keep context from getting too large
                 context = context[-10000:] if len(context) > 10000 else context
