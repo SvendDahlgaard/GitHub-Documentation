@@ -3,7 +3,8 @@ import sys
 import json
 from dotenv import load_dotenv
 from direct_github_client import DirectGitHubClient
-from SectionAnalyzer import SectionAnalyzer
+sys.path.append('..')  # Add parent directory to path
+from section_analyzer import SectionAnalyzer
 
 def test_section_analyzer(repo_owner, repo_name, branch=None):
     """
