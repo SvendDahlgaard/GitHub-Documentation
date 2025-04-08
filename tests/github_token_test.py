@@ -1,7 +1,7 @@
 import os
+import sys
 from github import Github
 from dotenv import load_dotenv
-import sys
 
 def test_github_token():
     """Test GitHub token validity and access to specified repository."""
