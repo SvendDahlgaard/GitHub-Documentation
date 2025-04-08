@@ -53,7 +53,7 @@ def main():
         print("\nAll tests PASSED! Your setup is ready to use.")
         return 0
     else:
-        print("\nSome tests FAILED. Please address the issues before continuing.")
+        print("\nSome tests FAILED! Please address the issues before continuing.")
         return 1
 
 if __name__ == "__main__":
