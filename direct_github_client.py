@@ -55,8 +55,13 @@ class DirectGitHubClient:
                 result.append(item)
             return result
         except Exception as e:
-            logger.error(f"Error listing repository files at path '{path}': {e}")
-            raise
+            error_msg = str(e)
+            logger.error(f"Error listing repository files at path '{path}': {error_msg}")
+            if "401" in error_msg:
+                logger.error("Authentication failed. Check your GitHub token.")
+            elif "404" in error_msg:
+                logger.error(f"Repository {owner}/{repo} not found or no access.")
+            raise e
     
     def get_file_content(self, owner: str, repo: str, path: str, branch: str = None) -> str:
         """
