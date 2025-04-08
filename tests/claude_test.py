@@ -6,6 +6,7 @@ import os
 import sys
 import json
 from dotenv import load_dotenv
+sys.path.append('..')  # Add parent directory to path
 from claude_analyzer import ClaudeAnalyzer
 
 def test_claude_analyzer():
@@ -15,9 +16,9 @@ def test_claude_analyzer():
     
     print("Testing Claude's code analysis capabilities...")
     
-    # Sample code to analyze
+    # Sample code to analyze (with properly escaped docstrings)
     sample_files = {
-        "sample.py": """
+        "sample.py": '''
 def hello_world():
     """Print a hello world message."""
     print("Hello, World!")
@@ -32,7 +33,7 @@ class Calculator:
     def subtract(self, a, b):
         """Subtract b from a."""
         return a - b
-"""
+'''
     }
     
     try:
