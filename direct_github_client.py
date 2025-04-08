@@ -25,42 +25,38 @@ class DirectGitHubClient:
     
     def list_repository_files(self, owner: str, repo: str, path: str = "", branch: str = None) -> List[Dict[str, Any]]:
         """
-        List files in a repository path.
-        
-        Args:
-            owner: Repository owner
-            repo: Repository name
-            path: Path to list (default: root)
-            branch: Branch to use (default: repository default branch)
-            
-        Returns:
-            List of dictionaries with file information
-        """
+        List files in a repository path """
         try:
             repository = self.github.get_repo(f"{owner}/{repo}")
-            contents = repository.get_contents(path, ref=branch)
-            
-            # Handle both single file and directory cases
-            if not isinstance(contents, list):
-                contents = [contents]
-                
-            result = []
-            for content in contents:
-                item = {
-                    "name": content.name,
-                    "path": content.path,
-                    "type": "file" if content.type == "file" else "dir",
-                    "size": content.size
-                }
-                result.append(item)
-            return result
+            print(f"successfully got repository {repository.name}")
+
+            try:
+                contents = repository.get_contents(path, ref=branch)
+                # Handle both single file and directory cases
+                if not isinstance(contents, list):
+                    contents = [contents]
+                    
+                result = []
+                for content in contents:
+                    item = {
+                        "name": content.name,
+                        "path": content.path,
+                        "type": "file" if content.type == "file" else "dir",
+                        "size": content.size
+                    }
+                    result.append(item)
+                return result
+            except Exception as e:
+                error_msg = str(e)
+                print(f"Error listing contents at '{path}': {error_msg}")
+                raise e
         except Exception as e:
             error_msg = str(e)
-            logger.error(f"Error listing repository files at path '{path}': {error_msg}")
+            print(f"Error accessing repository '{owner}/{repo}': {error_msg}")
             if "401" in error_msg:
-                logger.error("Authentication failed. Check your GitHub token.")
+                print("Authentication failed. Check your GitHub token.")
             elif "404" in error_msg:
-                logger.error(f"Repository {owner}/{repo} not found or no access.")
+                print(f"Repository {owner}/{repo} not found or no access.")
             raise e
     
     def get_file_content(self, owner: str, repo: str, path: str, branch: str = None) -> str:
@@ -106,6 +102,21 @@ class DirectGitHubClient:
         Returns:
             Dictionary mapping file paths to contents
         """
+
+        try:
+            repository = self.github.get_repo(f"{owner}/{repo}")
+            # If branch is None, use the default branch
+            if branch is None:
+                branch = repository.default_branch
+                print(f"Using default branch: {branch}")
+        except Exception as e:
+            print(f"Error accessing repository '{owner}/{repo}': {str(e)}")
+            print(f"Error type: {type(e).__name__}")
+            if hasattr(e, 'status'):
+                print(f"HTTP Status: {e.status}")
+            # Re-raise the exception to be handled by the calling method
+            raise
+
         if ignore_dirs is None:
             ignore_dirs = ['.git', 'node_modules', '__pycache__', 'dist', 'build']
             
