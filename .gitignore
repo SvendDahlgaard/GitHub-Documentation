@@ -1,4 +1,20 @@
-.env
+# Ignore virtual environment
+env/
+*.env
+
+# Ignore Python bytecode files
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+
+# Ignore other unnecessary files
+*.log
+*.sqlite3
+*.db
+
+# Ignore IDE/editor specific files (if you're using VS Code)
+.vscode/
+
+# Ignore other generated folders (e.g., analysis)
 analysis/

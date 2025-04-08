@@ -2,14 +2,16 @@ import os
 import sys
 import json
 import argparse
-import subprocess
-import tempfile
 from pathlib import Path
 from typing import List, Dict, Any, Tuple, Set
 from collections import defaultdict
 import logging
 import re
 from dotenv import load_dotenv
+
+# Import the new direct GitHub client
+from direct_github_client import DirectGitHubClient
+from claude_analyzer import ClaudeAnalyzer
 
 # Load environment variables from .env file
 load_dotenv()
@@ -22,217 +24,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-class MCPGitHubClient:
-    """Client that uses the MCP GitHub server to interact with repositories."""
-    
-    def __init__(self, claude_executable="claude"):
-        """
-        Initialize client with path to Claude executable with MCP server configured.
-        
-        Args:
-            claude_executable: Path to Claude executable (default: "claude")
-        """
-        self.claude_executable = claude_executable
-    
-    def run_mcp_command(self, tool: str, args: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Run an MCP command by creating a temporary conversation file.
-        
-        Args:
-            tool: Name of the MCP GitHub tool to use
-            args: Arguments to pass to the tool
-            
-        Returns:
-            Response from the MCP tool as a dictionary
-        """
-        # Create temporary file for the conversation
-        with tempfile.NamedTemporaryFile(suffix='.txt', mode='w+') as temp_file:
-            # Write the MCP command in a format Claude will understand
-            command_text = f"""
-I need you to use the GitHub MCP server's {tool} tool with these arguments:
-```json
-{json.dumps(args, indent=2)}
-```
-My GitHub token is: {os.getenv('GITHUB_TOKEN')}
-Please only return the raw JSON response from the tool without any additional text.
-"""
-            temp_file.write(command_text)
-            temp_file.flush()
-            
-            # Call Claude with this conversation file
-            result = subprocess.run(
-                [self.claude_executable, "send", temp_file.name],
-                capture_output=True,
-                text=True
-            )
-            
-            if result.returncode != 0:
-                raise RuntimeError(f"Error calling Claude: {result.stderr}")
-                
-            # Parse JSON from Claude's response
-            output = result.stdout
-            
-            # Find and extract the JSON part using regex to handle potential Claude formatting
-            json_pattern = r'```(?:json)?\s*(\{.*?\}|\[.*?\])```'
-            json_matches = re.findall(json_pattern, output, re.DOTALL)
-            
-            if not json_matches:
-                # Try finding JSON without code blocks
-                try:
-                    # Find the first occurrence of what looks like JSON
-                    json_text = re.search(r'(\{.*\}|\[.*\])', output, re.DOTALL).group(0)
-                    return json.loads(json_text)
-                except:
-                    raise ValueError(f"No JSON found in Claude's response: {output}")
-            
-            # Use the first match
-            try:
-                return json.loads(json_matches[0])
-            except json.JSONDecodeError:
-                raise ValueError(f"Invalid JSON in Claude's response: {json_matches[0]}")
-    
-    def list_repository_files(self, owner: str, repo: str, path: str = "", branch: str = None) -> List[Dict[str, Any]]:
-        """List files in a repository path using the get_file_contents MCP tool."""
-        args = {
-            "owner": owner,
-            "repo": repo,
-            "path": path
-        }
-        
-        if branch:
-            args["branch"] = branch
-            
-        result = self.run_mcp_command("get_file_contents", args)
-        
-        # Check if the result is a single file or a directory
-        if isinstance(result, dict) and result.get("type") == "file":
-            # It's a single file
-            return [result]
-        elif isinstance(result, list):
-            # It's a directory listing
-            return result
-        else:
-            # Unexpected response
-            raise ValueError(f"Unexpected response format: {result}")
-    
-    def get_file_content(self, owner: str, repo: str, path: str, branch: str = None) -> str:
-        """Get the content of a file using the get_file_contents MCP tool."""
-        args = {
-            "owner": owner,
-            "repo": repo,
-            "path": path
-        }
-        
-        if branch:
-            args["branch"] = branch
-            
-        result = self.run_mcp_command("get_file_contents", args)
-        
-        if isinstance(result, dict) and result.get("type") == "file":
-            # The result should include the content if it's a file
-            if "content" in result:
-                return result["content"]
-                
-        raise ValueError(f"Failed to get content for {path}")
-    
-    def get_repository_structure(self, owner: str, repo: str, branch: str = None, 
-                                ignore_dirs: List[str] = None, max_file_size: int = 500000,
-                                include_patterns: List[str] = None,
-                                extensions: List[str] = None) -> Dict[str, str]:
-        """
-        Recursively get the structure of a repository using MCP.
-        
-        Args:
-            owner: Repository owner
-            repo: Repository name
-            branch: Branch to analyze
-            ignore_dirs: Directories to ignore
-            max_file_size: Maximum file size to include
-            include_patterns: Patterns to specifically include
-            extensions: File extensions to include
-            
-        Returns:
-            Dictionary mapping file paths to contents
-        """
-        if ignore_dirs is None:
-            ignore_dirs = ['.git', 'node_modules', '__pycache__', 'dist', 'build']
-            
-        result = {}
-        visited = set()
-        
-        binary_extensions = [
-            '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.pdf', '.zip', 
-            '.gz', '.tar', '.class', '.exe', '.dll', '.so'
-        ]
-        
-        def should_include_file(path: str) -> bool:
-            # Check extension filter
-            if extensions:
-                if not any(path.endswith(ext) for ext in extensions):
-                    # Check include patterns as override
-                    if include_patterns and any(pattern in path for pattern in include_patterns):
-                        return True
-                    return False
-                
-            # Skip binary files
-            if any(path.endswith(ext) for ext in binary_extensions):
-                return False
-                
-            return True
-        
-        def traverse_dir(path: str = ""):
-            if path in visited:
-                return
-                
-            visited.add(path)
-            
-            try:
-                items = self.list_repository_files(owner, repo, path, branch)
-            except Exception as e:
-                logger.error(f"Error listing files in {path}: {e}")
-                return
-                
-            for item in items:
-                item_path = item.get("path", "")
-                item_type = item.get("type", "")
-                item_size = item.get("size", 0)
-                
-                # Skip ignored directories and their children
-                if any(ignored_dir in item_path for ignored_dir in ignore_dirs):
-                    logger.debug(f"Skipping ignored directory: {item_path}")
-                    continue
-                
-                if item_type == "dir":
-                    # Recursively process directories
-                    traverse_dir(item_path)
-                    
-                elif item_type == "file":
-                    # Apply filters
-                    if item_size > max_file_size:
-                        logger.debug(f"Skipping large file: {item_path} ({item_size} bytes)")
-                        continue
-                        
-                    if not should_include_file(item_path):
-                        logger.debug(f"Skipping file based on filters: {item_path}")
-                        continue
-                    
-                    # Fetch file content
-                    try:
-                        content = self.get_file_content(owner, repo, item_path, branch)
-                        result[item_path] = content
-                        logger.debug(f"Added file: {item_path}")
-                    except Exception as e:
-                        logger.error(f"Error getting content for {item_path}: {e}")
-        
-        # Start traversal from root
-        traverse_dir()
-        return result
-
 class SectionAnalyzer:
-    """Analyzes a repository by sections using MCP and Claude."""
+    """Analyzes a repository by sections using GitHub and Claude."""
     
-    def __init__(self, claude_executable="claude"):
-        self.claude_executable = claude_executable
+    def __init__(self, claude_analyzer=None):
+        self.claude_analyzer = claude_analyzer
         
     def identify_sections(self, repo_files: Dict[str, str]) -> List[Tuple[str, Dict[str, str]]]:
         """
@@ -344,7 +140,7 @@ class SectionAnalyzer:
     def analyze_section(self, section_name: str, section_files: Dict[str, str], 
                         query: str = None, context: str = None) -> str:
         """
-        Analyze a specific section of the repository using Claude directly.
+        Analyze a specific section of the repository using Claude.
         
         Args:
             section_name: Name of the section
@@ -355,65 +151,10 @@ class SectionAnalyzer:
         Returns:
             Claude's analysis of the section
         """
-        # Create a temporary file for the conversation
-        with tempfile.NamedTemporaryFile(suffix='.txt', mode='w+') as temp_file:
-            # Format the files for Claude
-            files_content = ""
-            for path, content in section_files.items():
-                files_content += f"\n\n### File: {path}\n```\n{content}\n```\n"
-            
-            # Default query if none provided
-            if not query:
-                query = f"Analyze this section of code ('{section_name}'). Explain its purpose, key components, and how it fits into the larger codebase."
-            
-            # Message including previous context
-            if context:
-                message = f"""Previously, I've analyzed other sections of this codebase and discovered: 
-
-{context}
-
-Now I'm analyzing the '{section_name}' section which contains these files:
-
-{files_content}
-
-{query}
-
-Provide a detailed but concise analysis focusing on:
-1. The purpose and functionality of this section
-2. Key classes, functions, and design patterns
-3. How this relates to the sections analyzed previously
-4. Any notable implementation details
-"""
-            else:
-                message = f"""I'm analyzing the '{section_name}' section of a codebase which contains these files:
-
-{files_content}
-
-{query}
-
-Provide a detailed but concise analysis focusing on:
-1. The purpose and functionality of this section
-2. Key classes, functions, and design patterns
-3. How this fits into a larger codebase
-4. Any notable implementation details
-"""
-            
-            # Write to temp file
-            temp_file.write(message)
-            temp_file.flush()
-            
-            # Call Claude with this conversation file
-            result = subprocess.run(
-                [self.claude_executable, "send", temp_file.name],
-                capture_output=True,
-                text=True
-            )
-            
-            if result.returncode != 0:
-                raise RuntimeError(f"Error calling Claude: {result.stderr}")
-                
-            # Return Claude's analysis
-            return result.stdout
+        if self.claude_analyzer:
+            return self.claude_analyzer.analyze_code(section_name, section_files, query, context)
+        else:
+            return "No Claude analyzer configured. Cannot analyze this section."
     
     def create_section_index(self, sections: List[Tuple[str, Dict[str, str]]], analyses: Dict[str, str]) -> str:
         """Create an index/directory of all analyzed sections with links."""
@@ -465,17 +206,39 @@ Provide a detailed but concise analysis focusing on:
 
 def analyze_repository(args):
     """Main function to analyze a repository by sections."""
-    # Initialize clients
-    mcp_client = MCPGitHubClient(claude_executable=args.claude_executable)
-    analyzer = SectionAnalyzer(claude_executable=args.claude_executable)
+    # Initialize GitHub client
+    try:
+        github_client = DirectGitHubClient()
+        logger.info(f"Successfully initialized GitHub client")
+    except Exception as e:
+        logger.error(f"Failed to initialize GitHub client: {e}")
+        sys.exit(1)
+    
+    # Initialize Claude analyzer
+    try:
+        if args.analysis_method == "api":
+            claude_analyzer = ClaudeAnalyzer(method="api")
+            logger.info("Using Claude API for analysis")
+        else:
+            claude_analyzer = ClaudeAnalyzer(
+                method="cli", 
+                claude_executable=args.claude_executable
+            )
+            logger.info(f"Using Claude CLI for analysis: {args.claude_executable}")
+    except Exception as e:
+        logger.error(f"Failed to initialize Claude analyzer: {e}")
+        sys.exit(1)
+        
+    # Initialize section analyzer
+    analyzer = SectionAnalyzer(claude_analyzer)
     
     # Create output directory if it doesn't exist
     os.makedirs(args.output_dir, exist_ok=True)
     
     try:
-        # Get repository files using MCP
+        # Get repository files
         logger.info(f"Fetching repository structure for {args.owner}/{args.repo}")
-        repo_files = mcp_client.get_repository_structure(
+        repo_files = github_client.get_repository_structure(
             args.owner, 
             args.repo, 
             branch=args.branch,
@@ -525,8 +288,8 @@ def analyze_repository(args):
             
             # Update context for next section (truncated to avoid too much context)
             if args.use_context:
-                # Extract key points for context (just a simple approach)
-                key_points = key_points = _extract_key_points(analysis)
+                # Extract key points for context
+                key_points = _extract_key_points(analysis)
                 context += f"\n\nSection '{section_name}':\n{key_points}\n"
                 # Keep context from getting too large
                 context = context[-10000:] if len(context) > 10000 else context
@@ -545,7 +308,6 @@ def analyze_repository(args):
         logger.error(f"Error: {e}")
         sys.exit(1)
     
-#@staticmethod
 def _extract_key_points(text, max_points=5):
     """Extract key points from analysis for context."""
     # Simple extraction of sentences with key indicators
@@ -568,11 +330,14 @@ def _extract_key_points(text, max_points=5):
     return " ".join(key_sentences)
 
 def main():
-    parser = argparse.ArgumentParser(description="Analyze a GitHub repository by sections using MCP and Claude")
+    parser = argparse.ArgumentParser(description="Analyze a GitHub repository by sections")
     parser.add_argument("--owner", required=True, help="GitHub repository owner")
     parser.add_argument("--repo", required=True, help="GitHub repository name")
     parser.add_argument("--branch", help="Branch to analyze (default: repository's default branch)")
-    parser.add_argument("--claude-executable", default="claude", help="Path to Claude executable")
+    parser.add_argument("--claude-executable", default="/home/svendsvupper/.npm-global/bin/claude", 
+                       help="Path to Claude executable (for CLI method)")
+    parser.add_argument("--analysis-method", choices=["api", "cli"], default="cli",
+                       help="Method to use for Claude analysis: API or CLI (default: cli)")
     parser.add_argument("--query", help="Question to ask Claude about each section (optional)")
     parser.add_argument("--ignore", nargs="*", default=['.git', 'node_modules', '__pycache__'], 
                         help="Directories to ignore")
