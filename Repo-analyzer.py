@@ -212,8 +212,8 @@ def main():
                        help="Method to use for sectioning the repository (default: structural)")
     parser.add_argument("--max-section-size", type=int, default=15,
                         help="Maximum number of files in a section before subdivision (default: 15)")
-    parser.add_argument("--min-section-size", type=int, default=1,
-                        help="Minimum number of files in a section - smaller sections will be merged (default: 1)")
+    parser.add_argument("--min-section-size", type=int, default=2,
+                        help="Minimum number of files in a section - smaller sections will be merged (default: 2)")
     parser.add_argument("--query", help="Question to ask Claude about each section (optional)")
     parser.add_argument("--ignore", nargs="*", default=['.git', 'node_modules', '__pycache__'], 
                         help="Directories to ignore")
