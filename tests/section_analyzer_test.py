@@ -6,8 +6,53 @@ sys.path.append('..')  # Add parent directory to path
 from direct_github_client import DirectGitHubClient
 from section_analyzer import SectionAnalyzer, AnalysisMethod
 
+# Global cache for repository files during tests
+_repo_files_cache = {}
+
+def get_repository_files(repo_owner, repo_name, branch=None, force_refresh=False):
+    """
+    Get repository files, using a local memory cache to avoid repeated API calls.
+    This function caches across test runs in the same process.
+    
+    Args:
+        repo_owner: Repository owner
+        repo_name: Repository name
+        branch: Branch to analyze
+        force_refresh: Force a refresh from the API
+        
+    Returns:
+        Dictionary of file paths to contents
+    """
+    cache_key = f"{repo_owner}/{repo_name}/{branch}"
+    
+    # Check in-memory cache first (for multiple tests in same run)
+    if not force_refresh and cache_key in _repo_files_cache:
+        print(f"Using in-memory cache for {cache_key}")
+        return _repo_files_cache[cache_key]
+    
+    # Initialize GitHub client with disk caching enabled
+    github_client = DirectGitHubClient(use_cache=True)
+    print(f"Fetching repository structure for {repo_owner}/{repo_name}...")
+    
+    # Use force_refresh=False to allow use of disk cache
+    repo_files = github_client.get_repository_structure(
+        repo_owner, 
+        repo_name, 
+        branch=branch,
+        ignore_dirs=['.git', 'node_modules', '__pycache__'],
+        max_file_size=500000,
+        force_refresh=force_refresh
+    )
+    
+    if repo_files:
+        # Store in memory cache
+        _repo_files_cache[cache_key] = repo_files
+        print(f"✓ Found {len(repo_files)} files to analyze (cached in memory)")
+    
+    return repo_files
+
 def test_section_analyzer(repo_owner, repo_name, branch=None, analysis_method="structural", 
-                        min_section_size=1):
+                        min_section_size=1, force_refresh=False):
     """
     Test the section analyzer functionality by fetching a repository
     and checking if sections are created correctly.
@@ -18,6 +63,7 @@ def test_section_analyzer(repo_owner, repo_name, branch=None, analysis_method="s
         branch: Branch to analyze (optional)
         analysis_method: Method to use for analysis ("structural", "dependency", or "hybrid")
         min_section_size: Minimum number of files in a section
+        force_refresh: Force refresh of repository data from GitHub
     """
     # Load environment variables
     load_dotenv()
@@ -27,29 +73,16 @@ def test_section_analyzer(repo_owner, repo_name, branch=None, analysis_method="s
     print(f"Minimum section size: {min_section_size}")
     
     try:
-        # Initialize GitHub client
-        github_client = DirectGitHubClient()
-        print("✓ Successfully initialized GitHub client")
-        
         # Initialize section analyzer
         section_analyzer = SectionAnalyzer()
         print("✓ Successfully initialized section analyzer")
         
-        # Get repository files
-        print(f"Fetching repository structure for {repo_owner}/{repo_name}...")
-        repo_files = github_client.get_repository_structure(
-            repo_owner, 
-            repo_name, 
-            branch=branch,
-            ignore_dirs=['.git', 'node_modules', '__pycache__'],
-            max_file_size=500000
-        )
+        # Get repository files (using cache)
+        repo_files = get_repository_files(repo_owner, repo_name, branch, force_refresh)
         
         if not repo_files:
             print("ERROR: No files found or all files were filtered out")
             return False
-            
-        print(f"✓ Found {len(repo_files)} files to analyze")
         
         # Sample a few files to verify content
         print("\nSample files:")
@@ -120,7 +153,7 @@ def test_section_analyzer(repo_owner, repo_name, branch=None, analysis_method="s
         traceback.print_exc()
         return False
 
-def test_all_analysis_methods(repo_owner, repo_name, branch=None, min_section_size=1):
+def test_all_analysis_methods(repo_owner, repo_name, branch=None, min_section_size=1, force_refresh=False):
     """Run tests for all analysis methods."""
     methods = ["structural", "dependency", "hybrid"]
     results = {}
@@ -130,12 +163,22 @@ def test_all_analysis_methods(repo_owner, repo_name, branch=None, min_section_si
     print(f"With minimum section size: {min_section_size}")
     print("=" * 60)
     
-    for method in methods:
+    # Force refresh only on the first method to update the cache
+    for i, method in enumerate(methods):
         print("\n" + "=" * 60)
         print(f"TESTING {method.upper()} ANALYSIS")
         print("=" * 60)
         
-        success = test_section_analyzer(repo_owner, repo_name, branch, method, min_section_size)
+        # Only force refresh on the first test
+        refresh_for_this_method = force_refresh and i == 0
+        success = test_section_analyzer(
+            repo_owner, 
+            repo_name, 
+            branch, 
+            method, 
+            min_section_size, 
+            refresh_for_this_method
+        )
         results[method] = success
     
     # Print summary
@@ -151,7 +194,7 @@ def test_all_analysis_methods(repo_owner, repo_name, branch=None, min_section_si
     
     return all_success
 
-def test_section_size_comparison(repo_owner, repo_name, branch=None, method="hybrid"):
+def test_section_size_comparison(repo_owner, repo_name, branch=None, method="hybrid", force_refresh=False):
     """Compare different minimum section sizes with the same analysis method."""
     min_sizes = [1, 2, 3, 5]
     results = {}
@@ -161,12 +204,22 @@ def test_section_size_comparison(repo_owner, repo_name, branch=None, method="hyb
     print(f"Using analysis method: {method}")
     print("=" * 60)
     
-    for min_size in min_sizes:
+    # Force refresh only once to populate the cache
+    for i, min_size in enumerate(min_sizes):
         print("\n" + "=" * 60)
         print(f"TESTING WITH MINIMUM SECTION SIZE {min_size}")
         print("=" * 60)
         
-        success = test_section_analyzer(repo_owner, repo_name, branch, method, min_size)
+        # Only force refresh on the first test
+        refresh_for_this_test = force_refresh and i == 0
+        success = test_section_analyzer(
+            repo_owner, 
+            repo_name, 
+            branch, 
+            method, 
+            min_size, 
+            refresh_for_this_test
+        )
         results[min_size] = success
     
     # Print summary
@@ -182,6 +235,16 @@ def test_section_size_comparison(repo_owner, repo_name, branch=None, method="hyb
     
     return all_success
 
+def clear_cache():
+    """Clear both in-memory and disk caches."""
+    global _repo_files_cache
+    _repo_files_cache.clear()
+    
+    from repo_cache import RepoCache
+    cache = RepoCache()
+    count = cache.clear_cache()
+    print(f"Cleared {count} cache files")
+
 if __name__ == "__main__":
     # Default repository to test on
     default_owner = "SvendDahlgaard"
@@ -195,33 +258,49 @@ if __name__ == "__main__":
     # Parse additional args
     test_mode = "all"  # Default to testing all methods
     min_section_size = 1  # Default minimum section size
+    force_refresh = False  # Default to using cache if available
     
     if len(sys.argv) > 4:
-        if sys.argv[4] in ["structural", "dependency", "hybrid", "all", "compare_sizes"]:
-            test_mode = sys.argv[4]
+        arg = sys.argv[4].lower()
+        if arg in ["structural", "dependency", "hybrid", "all", "compare_sizes", "clear_cache"]:
+            test_mode = arg
+        elif arg == "refresh":
+            force_refresh = True
         else:
             try:
-                min_section_size = int(sys.argv[4])
+                min_section_size = int(arg)
                 if min_section_size < 1:
                     min_section_size = 1
             except ValueError:
-                print(f"Invalid argument: {sys.argv[4]}. Using defaults.")
+                print(f"Invalid argument: {arg}. Using defaults.")
     
     if len(sys.argv) > 5:
-        try:
-            min_section_size = int(sys.argv[5])
-            if min_section_size < 1:
-                min_section_size = 1
-        except ValueError:
-            print(f"Invalid minimum section size: {sys.argv[5]}. Using default: {min_section_size}")
+        arg = sys.argv[5].lower()
+        if arg == "refresh":
+            force_refresh = True
+        else:
+            try:
+                min_section_size = int(arg)
+                if min_section_size < 1:
+                    min_section_size = 1
+            except ValueError:
+                print(f"Invalid minimum section size: {arg}. Using default: {min_section_size}")
+    
+    # Check if refresh is specified in any position
+    if any(arg.lower() == "refresh" for arg in sys.argv):
+        force_refresh = True
     
     # Run tests based on mode
-    if test_mode == "all":
-        success = test_all_analysis_methods(owner, repo, branch, min_section_size)
+    if test_mode == "clear_cache":
+        clear_cache()
+        print("Cache cleared successfully")
+        sys.exit(0)
+    elif test_mode == "all":
+        success = test_all_analysis_methods(owner, repo, branch, min_section_size, force_refresh)
     elif test_mode == "compare_sizes":
-        success = test_section_size_comparison(owner, repo, branch, "hybrid")
+        success = test_section_size_comparison(owner, repo, branch, "hybrid", force_refresh)
     else:
-        success = test_section_analyzer(owner, repo, branch, test_mode, min_section_size)
+        success = test_section_analyzer(owner, repo, branch, test_mode, min_section_size, force_refresh)
     
     if success:
         print("\nAll tests PASSED! Section analyzer is working correctly.")
