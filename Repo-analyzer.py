@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 # Import modules
 from direct_github_client import DirectGitHubClient
 from claude_analyzer import ClaudeAnalyzer
-from section_analyzer import SectionAnalyzer
+from section_analyzer import SectionAnalyzer, AnalysisMethod
 
 # Load environment variables from .env file
 load_dotenv()
@@ -23,6 +23,15 @@ logging.basicConfig(
     handlers=[logging.StreamHandler()]
 )
 logger = logging.getLogger(__name__)
+
+def get_analysis_method(method_name: str) -> AnalysisMethod:
+    """Convert string method name to AnalysisMethod enum."""
+    method_map = {
+        "structural": AnalysisMethod.STRUCTURAL,
+        "dependency": AnalysisMethod.DEPENDENCY,
+        "hybrid": AnalysisMethod.HYBRID
+    }
+    return method_map.get(method_name.lower(), AnalysisMethod.STRUCTURAL)
 
 def analyze_repository(args):
     """Main function to analyze a repository by sections."""
@@ -74,8 +83,16 @@ def analyze_repository(args):
             
         logger.info(f"Found {len(repo_files)} files to analyze")
         
+        # Determine the section analysis method
+        section_method = get_analysis_method(args.section_method)
+        logger.info(f"Using {section_method.name} analysis method for sections")
+        
         # Identify logical sections
-        sections = analyzer.identify_sections(repo_files)
+        sections = analyzer.analyze_repository(
+            repo_files, 
+            method=section_method,
+            max_section_size=args.max_section_size
+        )
         logger.info(f"Identified {len(sections)} logical sections")
         
         # Save section mapping for reference
@@ -126,6 +143,8 @@ def analyze_repository(args):
         
     except Exception as e:
         logger.error(f"Error: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
     
 def _extract_key_points(text, max_points=5):
@@ -158,6 +177,11 @@ def main():
                        help="Path to Claude executable (for CLI method)")
     parser.add_argument("--analysis-method", choices=["api", "cli"], default="cli",
                        help="Method to use for Claude analysis: API or CLI (default: cli)")
+    parser.add_argument("--section-method", choices=["structural", "dependency", "hybrid"], 
+                       default="structural",
+                       help="Method to use for sectioning the repository (default: structural)")
+    parser.add_argument("--max-section-size", type=int, default=15,
+                        help="Maximum number of files in a section before subdivision (default: 15)")
     parser.add_argument("--query", help="Question to ask Claude about each section (optional)")
     parser.add_argument("--ignore", nargs="*", default=['.git', 'node_modules', '__pycache__'], 
                         help="Directories to ignore")
