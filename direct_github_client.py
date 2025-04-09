@@ -2,26 +2,30 @@ import os
 import base64
 import re
 from github import Github
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import logging
+from repo_cache import RepoCache
 
 logger = logging.getLogger(__name__)
 
 class DirectGitHubClient:
     """Client that uses PyGithub to interact with repositories directly."""
     
-    def __init__(self, github_token=None):
+    def __init__(self, github_token=None, use_cache=True):
         """
         Initialize client with GitHub token.
         
         Args:
             github_token: GitHub access token (if None, attempts to read from environment)
+            use_cache: Whether to use caching to reduce API calls
         """
         token = github_token or os.getenv('GITHUB_TOKEN')
         if not token:
             raise ValueError("GitHub token is required. Set it in .env file or pass directly.")
         
         self.github = Github(token)
+        self.use_cache = use_cache
+        self.cache = RepoCache() if use_cache else None
     
     def list_repository_files(self, owner: str, repo: str, path: str = "", branch: str = None) -> List[Dict[str, Any]]:
         """
@@ -86,7 +90,8 @@ class DirectGitHubClient:
     def get_repository_structure(self, owner: str, repo: str, branch: str = None, 
                                ignore_dirs: List[str] = None, max_file_size: int = 500000,
                                include_patterns: List[str] = None,
-                               extensions: List[str] = None) -> Dict[str, str]:
+                               extensions: List[str] = None, 
+                               force_refresh: bool = False) -> Dict[str, str]:
         """
         Recursively get the structure of a repository.
         
@@ -98,10 +103,17 @@ class DirectGitHubClient:
             max_file_size: Maximum file size to include
             include_patterns: Patterns to specifically include
             extensions: File extensions to include
+            force_refresh: Whether to force a refresh of the cache
             
         Returns:
             Dictionary mapping file paths to contents
         """
+        # Check if we can use cached data
+        if self.use_cache and not force_refresh:
+            cached_files = self.cache.get_repo_files(owner, repo, branch)
+            if cached_files:
+                logger.info(f"Using cached repository structure for {owner}/{repo}")
+                return cached_files
 
         try:
             repository = self.github.get_repo(f"{owner}/{repo}")
@@ -189,4 +201,9 @@ class DirectGitHubClient:
         
         # Start traversal from root
         traverse_dir()
+        
+        # Cache the results if enabled
+        if self.use_cache and result:
+            self.cache.cache_repo_files(owner, repo, result, branch)
+        
         return result
