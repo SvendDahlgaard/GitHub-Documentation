@@ -91,7 +91,8 @@ def analyze_repository(args):
         sections = analyzer.analyze_repository(
             repo_files, 
             method=section_method,
-            max_section_size=args.max_section_size
+            max_section_size=args.max_section_size,
+            min_section_size=args.min_section_size
         )
         logger.info(f"Identified {len(sections)} logical sections")
         
@@ -182,6 +183,8 @@ def main():
                        help="Method to use for sectioning the repository (default: structural)")
     parser.add_argument("--max-section-size", type=int, default=15,
                         help="Maximum number of files in a section before subdivision (default: 15)")
+    parser.add_argument("--min-section-size", type=int, default=1,
+                        help="Minimum number of files in a section - smaller sections will be merged (default: 1)")
     parser.add_argument("--query", help="Question to ask Claude about each section (optional)")
     parser.add_argument("--ignore", nargs="*", default=['.git', 'node_modules', '__pycache__'], 
                         help="Directories to ignore")
