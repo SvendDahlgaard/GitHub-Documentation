@@ -7,6 +7,7 @@ import sys
 from github_token_test import test_github_token
 from section_analyzer_test import test_section_analyzer
 from claude_test import test_claude_analyzer
+from mcp_client_test import test_mcp_github_client
 
 def main():
     """Run all tests."""
@@ -40,6 +41,10 @@ def main():
     print("\n\n3. TESTING CLAUDE ANALYZER\n" + "-" * 30)
     claude_success = test_claude_analyzer()
     
+    # Test 4: MCP GitHub Client
+    print("\n\n4. TESTING MCP GITHUB CLIENT\n" + "-" * 30)
+    mcp_success = test_mcp_github_client()
+    
     # Summary
     print("\n\n" + "=" * 50)
     print("TEST SUMMARY")
@@ -47,14 +52,20 @@ def main():
     print(f"1. GitHub Token Test: {'PASSED' if token_success else 'FAILED'}")
     print(f"2. Section Analyzer Test: {'PASSED' if analyzer_success else 'FAILED'}")
     print(f"3. Claude Analyzer Test: {'PASSED' if claude_success else 'FAILED'}")
+    print(f"4. MCP GitHub Client Test: {'PASSED' if mcp_success else 'FAILED'}")
     
     # Overall status
-    if token_success and analyzer_success and claude_success:
+    if token_success and analyzer_success and claude_success and mcp_success:
         print("\nAll tests PASSED! Your setup is ready to use.")
         return 0
     else:
-        print("\nSome tests FAILED! Please address the issues before continuing.")
-        return 1
+        # MCP failure isn't critical since it's an optional feature
+        if not mcp_success and token_success and analyzer_success and claude_success:
+            print("\nCore tests PASSED! MCP features may not be available but basic functionality works.")
+            return 0
+        else:
+            print("\nSome core tests FAILED! Please address the issues before continuing.")
+            return 1
 
 if __name__ == "__main__":
     sys.exit(main())
