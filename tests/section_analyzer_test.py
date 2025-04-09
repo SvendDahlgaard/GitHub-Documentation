@@ -6,7 +6,8 @@ sys.path.append('..')  # Add parent directory to path
 from direct_github_client import DirectGitHubClient
 from section_analyzer import SectionAnalyzer, AnalysisMethod
 
-def test_section_analyzer(repo_owner, repo_name, branch=None, analysis_method="structural"):
+def test_section_analyzer(repo_owner, repo_name, branch=None, analysis_method="structural", 
+                        min_section_size=1):
     """
     Test the section analyzer functionality by fetching a repository
     and checking if sections are created correctly.
@@ -16,12 +17,14 @@ def test_section_analyzer(repo_owner, repo_name, branch=None, analysis_method="s
         repo_name: Repository name
         branch: Branch to analyze (optional)
         analysis_method: Method to use for analysis ("structural", "dependency", or "hybrid")
+        min_section_size: Minimum number of files in a section
     """
     # Load environment variables
     load_dotenv()
     
     print(f"Testing section analyzer on repository: {repo_owner}/{repo_name}")
     print(f"Using analysis method: {analysis_method}")
+    print(f"Minimum section size: {min_section_size}")
     
     try:
         # Initialize GitHub client
@@ -67,7 +70,8 @@ def test_section_analyzer(repo_owner, repo_name, branch=None, analysis_method="s
         try:
             sections = section_analyzer.analyze_repository(
                 repo_files, 
-                method=analysis_method_enum
+                method=analysis_method_enum,
+                min_section_size=min_section_size
             )
             print(f"✓ Identified {len(sections)} logical sections")
         except Exception as e:
@@ -88,13 +92,26 @@ def test_section_analyzer(repo_owner, repo_name, branch=None, analysis_method="s
                 print(f"     - ... and {len(files) - 3} more files")
         
         # Save section mapping for reference
-        output_dir = f"test_output/{analysis_method}"
+        output_dir = f"test_output/{analysis_method}_min{min_section_size}"
         os.makedirs(output_dir, exist_ok=True)
         section_map = {section: list(files.keys()) for section, files in sections}
         with open(os.path.join(output_dir, "test_sections.json"), "w") as f:
             json.dump(section_map, f, indent=2)
         print(f"\n✓ Section map saved to {output_dir}/test_sections.json")
         
+        # Print section size statistics
+        section_sizes = [len(files) for _, files in sections]
+        if section_sizes:
+            avg_size = sum(section_sizes) / len(section_sizes)
+            min_size = min(section_sizes)
+            max_size = max(section_sizes)
+            print(f"\nSection size statistics:")
+            print(f"  - Total sections: {len(sections)}")
+            print(f"  - Average files per section: {avg_size:.2f}")
+            print(f"  - Minimum files in a section: {min_size}")
+            print(f"  - Maximum files in a section: {max_size}")
+            print(f"  - Sections with only 1 file: {sum(1 for size in section_sizes if size == 1)}")
+            
         return True
         
     except Exception as e:
@@ -103,13 +120,14 @@ def test_section_analyzer(repo_owner, repo_name, branch=None, analysis_method="s
         traceback.print_exc()
         return False
 
-def test_all_analysis_methods(repo_owner, repo_name, branch=None):
+def test_all_analysis_methods(repo_owner, repo_name, branch=None, min_section_size=1):
     """Run tests for all analysis methods."""
     methods = ["structural", "dependency", "hybrid"]
     results = {}
     
     print("=" * 60)
     print(f"TESTING ALL SECTION ANALYSIS METHODS ON {repo_owner}/{repo_name}")
+    print(f"With minimum section size: {min_section_size}")
     print("=" * 60)
     
     for method in methods:
@@ -117,7 +135,7 @@ def test_all_analysis_methods(repo_owner, repo_name, branch=None):
         print(f"TESTING {method.upper()} ANALYSIS")
         print("=" * 60)
         
-        success = test_section_analyzer(repo_owner, repo_name, branch, method)
+        success = test_section_analyzer(repo_owner, repo_name, branch, method, min_section_size)
         results[method] = success
     
     # Print summary
@@ -133,6 +151,37 @@ def test_all_analysis_methods(repo_owner, repo_name, branch=None):
     
     return all_success
 
+def test_section_size_comparison(repo_owner, repo_name, branch=None, method="hybrid"):
+    """Compare different minimum section sizes with the same analysis method."""
+    min_sizes = [1, 2, 3, 5]
+    results = {}
+    
+    print("=" * 60)
+    print(f"COMPARING DIFFERENT MINIMUM SECTION SIZES ON {repo_owner}/{repo_name}")
+    print(f"Using analysis method: {method}")
+    print("=" * 60)
+    
+    for min_size in min_sizes:
+        print("\n" + "=" * 60)
+        print(f"TESTING WITH MINIMUM SECTION SIZE {min_size}")
+        print("=" * 60)
+        
+        success = test_section_analyzer(repo_owner, repo_name, branch, method, min_size)
+        results[min_size] = success
+    
+    # Print summary
+    print("\n" + "=" * 60)
+    print("SUMMARY OF RESULTS")
+    print("=" * 60)
+    
+    all_success = True
+    for min_size, success in results.items():
+        status = "PASSED" if success else "FAILED"
+        print(f"Minimum section size {min_size}: {status}")
+        all_success = all_success and success
+    
+    return all_success
+
 if __name__ == "__main__":
     # Default repository to test on
     default_owner = "SvendDahlgaard"
@@ -143,16 +192,36 @@ if __name__ == "__main__":
     repo = sys.argv[2] if len(sys.argv) > 2 else default_repo
     branch = sys.argv[3] if len(sys.argv) > 3 else None
     
-    # Check if a specific method is requested
-    if len(sys.argv) > 4 and sys.argv[4] in ["structural", "dependency", "hybrid", "all"]:
-        method = sys.argv[4]
-    else:
-        method = "all"  # Default to testing all methods
+    # Parse additional args
+    test_mode = "all"  # Default to testing all methods
+    min_section_size = 1  # Default minimum section size
     
-    if method == "all":
-        success = test_all_analysis_methods(owner, repo, branch)
+    if len(sys.argv) > 4:
+        if sys.argv[4] in ["structural", "dependency", "hybrid", "all", "compare_sizes"]:
+            test_mode = sys.argv[4]
+        else:
+            try:
+                min_section_size = int(sys.argv[4])
+                if min_section_size < 1:
+                    min_section_size = 1
+            except ValueError:
+                print(f"Invalid argument: {sys.argv[4]}. Using defaults.")
+    
+    if len(sys.argv) > 5:
+        try:
+            min_section_size = int(sys.argv[5])
+            if min_section_size < 1:
+                min_section_size = 1
+        except ValueError:
+            print(f"Invalid minimum section size: {sys.argv[5]}. Using default: {min_section_size}")
+    
+    # Run tests based on mode
+    if test_mode == "all":
+        success = test_all_analysis_methods(owner, repo, branch, min_section_size)
+    elif test_mode == "compare_sizes":
+        success = test_section_size_comparison(owner, repo, branch, "hybrid")
     else:
-        success = test_section_analyzer(owner, repo, branch, method)
+        success = test_section_analyzer(owner, repo, branch, test_mode, min_section_size)
     
     if success:
         print("\nAll tests PASSED! Section analyzer is working correctly.")
