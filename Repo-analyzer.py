@@ -10,8 +10,10 @@ from dotenv import load_dotenv
 
 # Import modules
 from direct_github_client import DirectGitHubClient
+from mcp_github_client import MCPGitHubClient
 from claude_analyzer import ClaudeAnalyzer
 from section_analyzer import SectionAnalyzer, AnalysisMethod
+from mcp_section_analyzer import MCPSectionAnalyzer
 
 # Load environment variables from .env file
 load_dotenv()
@@ -37,8 +39,15 @@ def analyze_repository(args):
     """Main function to analyze a repository by sections."""
     # Initialize GitHub client
     try:
-        github_client = DirectGitHubClient()
-        logger.info(f"Successfully initialized GitHub client")
+        if args.client_type == "mcp":
+            github_client = MCPGitHubClient(
+                use_cache=not args.no_cache,
+                claude_executable=args.claude_executable
+            )
+            logger.info(f"Successfully initialized MCP GitHub client")
+        else:
+            github_client = DirectGitHubClient(use_cache=not args.no_cache)
+            logger.info(f"Successfully initialized Direct GitHub client")
     except Exception as e:
         logger.error(f"Failed to initialize GitHub client: {e}")
         sys.exit(1)
@@ -59,7 +68,12 @@ def analyze_repository(args):
         sys.exit(1)
         
     # Initialize section analyzer
-    analyzer = SectionAnalyzer(claude_analyzer)
+    if args.client_type == "mcp":
+        analyzer = MCPSectionAnalyzer(claude_analyzer, github_client)
+        logger.info("Using enhanced MCP section analyzer")
+    else:
+        analyzer = SectionAnalyzer(claude_analyzer)
+        logger.info("Using standard section analyzer")
     
     # Create output directory if it doesn't exist
     os.makedirs(args.output_dir, exist_ok=True)
@@ -88,12 +102,25 @@ def analyze_repository(args):
         logger.info(f"Using {section_method.name} analysis method for sections")
         
         # Identify logical sections
-        sections = analyzer.analyze_repository(
-            repo_files, 
-            method=section_method,
-            max_section_size=args.max_section_size,
-            min_section_size=args.min_section_size
-        )
+        if args.client_type == "mcp":
+            # Use enhanced analysis with owner/repo information
+            sections = analyzer.analyze_repository(
+                repo_files, 
+                method=section_method,
+                max_section_size=args.max_section_size,
+                min_section_size=args.min_section_size,
+                owner=args.owner,
+                repo=args.repo
+            )
+        else:
+            # Use standard analysis
+            sections = analyzer.analyze_repository(
+                repo_files, 
+                method=section_method,
+                max_section_size=args.max_section_size,
+                min_section_size=args.min_section_size
+            )
+        
         logger.info(f"Identified {len(sections)} logical sections")
         
         # Save section mapping for reference
@@ -178,6 +205,8 @@ def main():
                        help="Path to Claude executable (for CLI method)")
     parser.add_argument("--analysis-method", choices=["api", "cli"], default="cli",
                        help="Method to use for Claude analysis: API or CLI (default: cli)")
+    parser.add_argument("--client-type", choices=["direct", "mcp"], default="direct",
+                       help="Type of GitHub client to use: direct or MCP (default: direct)")
     parser.add_argument("--section-method", choices=["structural", "dependency", "hybrid"], 
                        default="structural",
                        help="Method to use for sectioning the repository (default: structural)")
@@ -198,6 +227,8 @@ def main():
                         help="Directory to output analysis files")
     parser.add_argument("--use-context", action="store_true", 
                         help="Use context from previous sections in analysis")
+    parser.add_argument("--no-cache", action="store_true",
+                        help="Disable caching of repository files")
     parser.add_argument("--verbose", "-v", action="store_true", 
                         help="Enable verbose logging")
     
