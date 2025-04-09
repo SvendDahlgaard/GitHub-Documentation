@@ -22,7 +22,8 @@ class SectionAnalyzer:
     
     def analyze_repository(self, repo_files: Dict[str, str], 
                          method: AnalysisMethod = AnalysisMethod.STRUCTURAL,
-                         max_section_size: int = 15) -> List[Tuple[str, Dict[str, str]]]:
+                         max_section_size: int = 15,
+                         min_section_size: int = 1) -> List[Tuple[str, Dict[str, str]]]:
         """
         Analyze repository using the specified method.
         
@@ -30,19 +31,26 @@ class SectionAnalyzer:
             repo_files: Dictionary mapping file paths to contents
             method: Analysis method to use
             max_section_size: Maximum number of files in a section before subdivision
+            min_section_size: Minimum number of files in a section (smaller sections will be merged)
             
         Returns:
             List of tuples (section_name, {file_path: content})
         """
         if method == AnalysisMethod.STRUCTURAL:
-            return self.structural_analysis(repo_files, max_section_size)
+            sections = self.structural_analysis(repo_files, max_section_size)
         elif method == AnalysisMethod.DEPENDENCY:
-            return self.dependency_analysis(repo_files, max_section_size)
+            sections = self.dependency_analysis(repo_files, max_section_size)
         elif method == AnalysisMethod.HYBRID:
-            return self.hybrid_analysis(repo_files, max_section_size)
+            sections = self.hybrid_analysis(repo_files, max_section_size)
         else:
             logger.warning(f"Unknown analysis method: {method}. Using structural analysis.")
-            return self.structural_analysis(repo_files, max_section_size)
+            sections = self.structural_analysis(repo_files, max_section_size)
+        
+        # Apply minimum section size if specified
+        if min_section_size > 1:
+            sections = self._merge_small_sections(sections, min_section_size)
+            
+        return sections
     
     def identify_sections(self, repo_files: Dict[str, str]) -> List[Tuple[str, Dict[str, str]]]:
         """
@@ -55,6 +63,88 @@ class SectionAnalyzer:
             List of tuples (section_name, {file_path: content})
         """
         return self.structural_analysis(repo_files)
+    
+    def _merge_small_sections(self, sections: List[Tuple[str, Dict[str, str]]], 
+                           min_size: int) -> List[Tuple[str, Dict[str, str]]]:
+        """
+        Merge sections that are smaller than the minimum size.
+        
+        Strategy:
+        1. Keep all sections that meet the minimum size
+        2. Group small sections by their parent directory/category
+        3. Merge small sections within the same group
+        4. If merged sections are still too small, add them to a "miscellaneous" section
+        
+        Args:
+            sections: List of (section_name, files) tuples
+            min_size: Minimum number of files in a section
+            
+        Returns:
+            List of merged sections
+        """
+        if min_size <= 1:
+            return sections
+            
+        # Separate large and small sections
+        large_sections = []
+        small_sections = []
+        
+        for name, files in sections:
+            if len(files) >= min_size:
+                large_sections.append((name, files))
+            else:
+                small_sections.append((name, files))
+        
+        if not small_sections:
+            return large_sections
+            
+        # Group small sections by parent category
+        parent_groups = defaultdict(list)
+        for name, files in small_sections:
+            # Use first part of the section name as the parent category
+            parent = name.split('/')[0]
+            parent_groups[parent].append((name, files))
+        
+        # Merge small sections within the same parent category
+        merged_sections = []
+        for parent, group_sections in parent_groups.items():
+            if not group_sections:
+                continue
+                
+            # Merge files from all sections in this group
+            merged_files = {}
+            for _, files in group_sections:
+                merged_files.update(files)
+            
+            # If the merged section is large enough, add it
+            if len(merged_files) >= min_size:
+                # Create a name based on the parent and number of merged sections
+                if len(group_sections) > 1:
+                    merged_name = f"{parent}/merged_{len(group_sections)}_sections"
+                else:
+                    merged_name = group_sections[0][0]
+                merged_sections.append((merged_name, merged_files))
+            else:
+                # If still too small, add to a pending list for further merging
+                merged_sections.append((f"{parent}/small_files", merged_files))
+        
+        # Final step: handle any remaining small sections
+        final_merged_sections = []
+        misc_files = {}
+        
+        for name, files in merged_sections:
+            if len(files) >= min_size:
+                final_merged_sections.append((name, files))
+            else:
+                # Add to miscellaneous bucket
+                misc_files.update(files)
+        
+        # If we have miscellaneous files, create a section for them
+        if misc_files:
+            final_merged_sections.append(("miscellaneous", misc_files))
+        
+        # Return large sections plus merged small sections
+        return large_sections + final_merged_sections
         
     def structural_analysis(self, repo_files: Dict[str, str], 
                           max_section_size: int = 15) -> List[Tuple[str, Dict[str, str]]]:
