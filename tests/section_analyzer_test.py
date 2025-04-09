@@ -4,9 +4,9 @@ import json
 from dotenv import load_dotenv
 sys.path.append('..')  # Add parent directory to path
 from direct_github_client import DirectGitHubClient
-from section_analyzer import SectionAnalyzer
+from section_analyzer import SectionAnalyzer, AnalysisMethod
 
-def test_section_analyzer(repo_owner, repo_name, branch=None):
+def test_section_analyzer(repo_owner, repo_name, branch=None, analysis_method="structural"):
     """
     Test the section analyzer functionality by fetching a repository
     and checking if sections are created correctly.
@@ -15,11 +15,13 @@ def test_section_analyzer(repo_owner, repo_name, branch=None):
         repo_owner: Repository owner username
         repo_name: Repository name
         branch: Branch to analyze (optional)
+        analysis_method: Method to use for analysis ("structural", "dependency", or "hybrid")
     """
     # Load environment variables
     load_dotenv()
     
     print(f"Testing section analyzer on repository: {repo_owner}/{repo_name}")
+    print(f"Using analysis method: {analysis_method}")
     
     try:
         # Initialize GitHub client
@@ -52,10 +54,27 @@ def test_section_analyzer(repo_owner, repo_name, branch=None):
         for i, (path, _) in enumerate(list(repo_files.items())[:sample_count]):
             print(f"  {i+1}. {path}")
         
+        # Convert string method to enum
+        method_map = {
+            "structural": AnalysisMethod.STRUCTURAL,
+            "dependency": AnalysisMethod.DEPENDENCY,
+            "hybrid": AnalysisMethod.HYBRID
+        }
+        analysis_method_enum = method_map.get(analysis_method.lower(), AnalysisMethod.STRUCTURAL)
+        
         # Identify logical sections
-        print("\nIdentifying logical sections...")
-        sections = section_analyzer.identify_sections(repo_files)
-        print(f"✓ Identified {len(sections)} logical sections")
+        print(f"\nIdentifying logical sections using {analysis_method} analysis...")
+        try:
+            sections = section_analyzer.analyze_repository(
+                repo_files, 
+                method=analysis_method_enum
+            )
+            print(f"✓ Identified {len(sections)} logical sections")
+        except Exception as e:
+            print(f"ERROR: Failed to analyze repository: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
         
         # Print section summary
         print("\nSection summary:")
@@ -69,7 +88,7 @@ def test_section_analyzer(repo_owner, repo_name, branch=None):
                 print(f"     - ... and {len(files) - 3} more files")
         
         # Save section mapping for reference
-        output_dir = "test_output"
+        output_dir = f"test_output/{analysis_method}"
         os.makedirs(output_dir, exist_ok=True)
         section_map = {section: list(files.keys()) for section, files in sections}
         with open(os.path.join(output_dir, "test_sections.json"), "w") as f:
@@ -84,6 +103,36 @@ def test_section_analyzer(repo_owner, repo_name, branch=None):
         traceback.print_exc()
         return False
 
+def test_all_analysis_methods(repo_owner, repo_name, branch=None):
+    """Run tests for all analysis methods."""
+    methods = ["structural", "dependency", "hybrid"]
+    results = {}
+    
+    print("=" * 60)
+    print(f"TESTING ALL SECTION ANALYSIS METHODS ON {repo_owner}/{repo_name}")
+    print("=" * 60)
+    
+    for method in methods:
+        print("\n" + "=" * 60)
+        print(f"TESTING {method.upper()} ANALYSIS")
+        print("=" * 60)
+        
+        success = test_section_analyzer(repo_owner, repo_name, branch, method)
+        results[method] = success
+    
+    # Print summary
+    print("\n" + "=" * 60)
+    print("SUMMARY OF RESULTS")
+    print("=" * 60)
+    
+    all_success = True
+    for method, success in results.items():
+        status = "PASSED" if success else "FAILED"
+        print(f"{method.capitalize()} Analysis: {status}")
+        all_success = all_success and success
+    
+    return all_success
+
 if __name__ == "__main__":
     # Default repository to test on
     default_owner = "SvendDahlgaard"
@@ -94,7 +143,16 @@ if __name__ == "__main__":
     repo = sys.argv[2] if len(sys.argv) > 2 else default_repo
     branch = sys.argv[3] if len(sys.argv) > 3 else None
     
-    success = test_section_analyzer(owner, repo, branch)
+    # Check if a specific method is requested
+    if len(sys.argv) > 4 and sys.argv[4] in ["structural", "dependency", "hybrid", "all"]:
+        method = sys.argv[4]
+    else:
+        method = "all"  # Default to testing all methods
+    
+    if method == "all":
+        success = test_all_analysis_methods(owner, repo, branch)
+    else:
+        success = test_section_analyzer(owner, repo, branch, method)
     
     if success:
         print("\nAll tests PASSED! Section analyzer is working correctly.")
