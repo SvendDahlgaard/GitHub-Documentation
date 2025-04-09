@@ -61,9 +61,12 @@ else
         "claude")
             run_test claude_test
             ;;
+        "mcp")
+            run_test mcp_client_test
+            ;;
         *)
             echo -e "${RED}Unknown test: $1${NC}"
-            echo "Available tests: github, section, claude"
+            echo "Available tests: github, section, claude, mcp"
             exit 1
             ;;
     esac
