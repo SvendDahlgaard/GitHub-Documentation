@@ -33,14 +33,25 @@ class ClaudeAnalyzer:
                 raise ValueError("Claude API key is required for API method. Set it in .env file or pass directly.")
         elif method == "cli":
             self.claude_executable = claude_executable or "claude"
-            # Check if executable exists
+            # Check if executable exists and supports --model flag
             try:
-                result = subprocess.run([self.claude_executable, "--version"], 
+                # First check if claude is available
+                version_result = subprocess.run([self.claude_executable, "--version"], 
                                       capture_output=True, text=True, timeout=10)
-                if result.returncode != 0:
-                    logger.warning(f"Claude executable check failed: {result.stderr}")
+                if version_result.returncode != 0:
+                    logger.warning(f"Claude executable check failed: {version_result.stderr}")
+                else:
+                    logger.info(f"Claude version: {version_result.stdout.strip()}")
+                    
+                # Then check if --model flag is supported
+                help_result = subprocess.run([self.claude_executable, "send", "--help"], 
+                                    capture_output=True, text=True, timeout=10)
+                self.supports_model_flag = "--model" in help_result.stdout
+                logger.info(f"Claude CLI supports --model flag: {self.supports_model_flag}")
+                
             except Exception as e:
                 logger.warning(f"Could not verify Claude executable: {e}")
+                self.supports_model_flag = False
         else:
             raise ValueError("Method must be 'api' or 'cli'")
     
@@ -234,25 +245,31 @@ Provide a detailed but concise analysis focusing on:
                 # Call Claude with this conversation file
                 logger.debug(f"Calling Claude CLI with file: {temp_file.name}")
                 
-                # Specify model if using Claude 3
-                if "claude-3" in self.claude_model:
-                    result = subprocess.run(
-                        [self.claude_executable, "send", "--model", self.claude_model, temp_file.name],
-                        capture_output=True,
-                        text=True,
-                        timeout=180  # 3-minute timeout for analysis
-                    )
+                # Only use --model if supported
+                if hasattr(self, 'supports_model_flag') and self.supports_model_flag and "claude-3" in self.claude_model:
+                    logger.debug(f"Using --model flag with model: {self.claude_model}")
+                    cmd = [self.claude_executable, "send", "--model", self.claude_model, temp_file.name]
                 else:
-                    result = subprocess.run(
-                        [self.claude_executable, "send", temp_file.name],
-                        capture_output=True,
-                        text=True,
-                        timeout=180  # 3-minute timeout for analysis
-                    )
+                    logger.debug("Using Claude CLI without model specification")
+                    cmd = [self.claude_executable, "send", temp_file.name]
+                
+                logger.debug(f"Executing command: {' '.join(cmd)}")
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=180  # 3-minute timeout for analysis
+                )
                 
                 if result.returncode != 0:
-                    logger.error(f"Claude CLI error: {result.stderr}")
-                    return f"Error: Failed to get analysis from Claude CLI"
+                    error_msg = result.stderr.strip()
+                    logger.error(f"Claude CLI error: {error_msg}")
+                    return f"Error: Failed to get analysis from Claude CLI\nCommand: {' '.join(cmd)}\nError: {error_msg}"
+                
+                # Check if we got a meaningful response
+                if not result.stdout or len(result.stdout.strip()) < 10:
+                    logger.error("Claude CLI returned empty or very short response")
+                    return "Error: Claude CLI returned empty or very short response"
                 
                 return result.stdout
                 
