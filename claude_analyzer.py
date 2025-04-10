@@ -33,7 +33,7 @@ class ClaudeAnalyzer:
                 raise ValueError("Claude API key is required for API method. Set it in .env file or pass directly.")
         elif method == "cli":
             self.claude_executable = claude_executable or "claude"
-            # Check if executable exists and supports --model flag
+            # Check if executable exists and get version info
             try:
                 # First check if claude is available
                 version_result = subprocess.run([self.claude_executable, "--version"], 
@@ -41,7 +41,11 @@ class ClaudeAnalyzer:
                 if version_result.returncode != 0:
                     logger.warning(f"Claude executable check failed: {version_result.stderr}")
                 else:
-                    logger.info(f"Claude version: {version_result.stdout.strip()}")
+                    version_output = version_result.stdout.strip()
+                    logger.info(f"Claude version: {version_output}")
+                    # Check if this is Claude Code
+                    self.is_claude_code = "Code" in version_output
+                    logger.info(f"Using Claude Code: {self.is_claude_code}")
                     
                 # Then check if --model flag is supported
                 help_result = subprocess.run([self.claude_executable, "send", "--help"], 
@@ -49,9 +53,18 @@ class ClaudeAnalyzer:
                 self.supports_model_flag = "--model" in help_result.stdout
                 logger.info(f"Claude CLI supports --model flag: {self.supports_model_flag}")
                 
+                # For Claude Code, determine if we need to use different command format
+                if self.is_claude_code:
+                    # Claude Code requires different handling - it's more interactive
+                    logger.info("Using Claude Code mode - will use print flag for non-interactive output")
+                    self.claude_code_mode = True
+                else:
+                    self.claude_code_mode = False
+                
             except Exception as e:
                 logger.warning(f"Could not verify Claude executable: {e}")
                 self.supports_model_flag = False
+                self.claude_code_mode = False
         else:
             raise ValueError("Method must be 'api' or 'cli'")
     
@@ -245,20 +258,31 @@ Provide a detailed but concise analysis focusing on:
                 # Call Claude with this conversation file
                 logger.debug(f"Calling Claude CLI with file: {temp_file.name}")
                 
-                # Only use --model if supported
-                if hasattr(self, 'supports_model_flag') and self.supports_model_flag and "claude-3" in self.claude_model:
-                    logger.debug(f"Using --model flag with model: {self.claude_model}")
+                # Special handling for Claude Code vs standard Claude CLI
+                if hasattr(self, 'claude_code_mode') and self.claude_code_mode:
+                    # Claude Code requires the -p/--print flag for non-interactive output
+                    logger.debug("Using Claude Code with --print flag")
+                    cmd = [self.claude_executable, "-p", temp_file.name]
+                elif hasattr(self, 'supports_model_flag') and self.supports_model_flag and "claude-3" in self.claude_model:
+                    # Standard Claude CLI with model flag
+                    logger.debug(f"Using Claude CLI with --model flag: {self.claude_model}")
                     cmd = [self.claude_executable, "send", "--model", self.claude_model, temp_file.name]
                 else:
-                    logger.debug("Using Claude CLI without model specification")
+                    # Standard Claude CLI without model specification
+                    logger.debug("Using standard Claude CLI command")
                     cmd = [self.claude_executable, "send", temp_file.name]
                 
                 logger.debug(f"Executing command: {' '.join(cmd)}")
+                
+                # Use a longer timeout for Claude Code which may take more time
+                timeout = 300 if hasattr(self, 'claude_code_mode') and self.claude_code_mode else 180
+                
+                # Run the command
                 result = subprocess.run(
                     cmd,
                     capture_output=True,
                     text=True,
-                    timeout=180  # 3-minute timeout for analysis
+                    timeout=timeout
                 )
                 
                 if result.returncode != 0:
@@ -275,7 +299,7 @@ Provide a detailed but concise analysis focusing on:
                 
         except subprocess.TimeoutExpired:
             logger.error("Claude CLI timed out")
-            return "Error: Claude analysis timed out"
+            return f"Error: Claude analysis timed out after {timeout} seconds"
         except Exception as e:
             logger.error(f"Error calling Claude CLI: {e}")
             return f"Error: {str(e)}"
