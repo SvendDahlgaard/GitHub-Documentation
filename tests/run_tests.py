@@ -8,6 +8,7 @@ from github_token_test import test_github_token
 from section_analyzer_test import test_section_analyzer
 from claude_test import test_claude_analyzer
 from mcp_client_test import test_mcp_github_client
+from batch_analyzer_test import test_mock_batch
 
 def main():
     """Run all tests."""
@@ -45,6 +46,10 @@ def main():
     print("\n\n4. TESTING MCP GITHUB CLIENT\n" + "-" * 30)
     mcp_success = test_mcp_github_client()
     
+    # Test 5: Batch Analyzer (using mock mode to avoid API costs)
+    print("\n\n5. TESTING BATCH ANALYZER\n" + "-" * 30)
+    batch_success = test_mock_batch()
+    
     # Summary
     print("\n\n" + "=" * 50)
     print("TEST SUMMARY")
@@ -53,19 +58,22 @@ def main():
     print(f"2. Section Analyzer Test: {'PASSED' if analyzer_success else 'FAILED'}")
     print(f"3. Claude Analyzer Test: {'PASSED' if claude_success else 'FAILED'}")
     print(f"4. MCP GitHub Client Test: {'PASSED' if mcp_success else 'FAILED'}")
+    print(f"5. Batch Analyzer Test: {'PASSED' if batch_success else 'FAILED'}")
     
     # Overall status
-    if token_success and analyzer_success and claude_success and mcp_success:
+    core_tests_passed = token_success and analyzer_success and claude_success
+    additional_tests_passed = mcp_success and batch_success
+    
+    if core_tests_passed and additional_tests_passed:
         print("\nAll tests PASSED! Your setup is ready to use.")
         return 0
+    elif core_tests_passed:
+        # MCP and Batch failures aren't critical since they're optional features
+        print("\nCore tests PASSED! Some additional features may not be available but basic functionality works.")
+        return 0
     else:
-        # MCP failure isn't critical since it's an optional feature
-        if not mcp_success and token_success and analyzer_success and claude_success:
-            print("\nCore tests PASSED! MCP features may not be available but basic functionality works.")
-            return 0
-        else:
-            print("\nSome core tests FAILED! Please address the issues before continuing.")
-            return 1
+        print("\nSome core tests FAILED! Please address the issues before continuing.")
+        return 1
 
 if __name__ == "__main__":
     sys.exit(main())
