@@ -54,6 +54,8 @@ class AdvancedCalculator(Calculator):
 '''
     }
     
+    method_working = None
+    
     try:
         # First, try CLI method
         print("\nTesting Claude CLI method...")
@@ -61,26 +63,38 @@ class AdvancedCalculator(Calculator):
             # Try with default (latest) model
             cli_analyzer = ClaudeAnalyzer(method="cli")
             analysis_cli = cli_analyzer.analyze_code("Sample Code", sample_files)
-            print("✓ Claude CLI method working!")
-            print(f"✓ Using model: {cli_analyzer.claude_model}")
-            print("\nSample analysis snippet:")
-            print("-" * 40)
-            print(analysis_cli[:200] + "..." if len(analysis_cli) > 200 else analysis_cli)
-            print("-" * 40)
-            method_working = "cli"
             
-            # Test context handling with a second analysis
-            print("\nTesting context optimization...")
-            analysis_with_context = cli_analyzer.analyze_code(
-                "Advanced Code", 
-                sample_files2, 
-                context=analysis_cli
-            )
-            print("✓ Context optimization working!")
-            print("\nSample analysis with context snippet:")
-            print("-" * 40)
-            print(analysis_with_context[:200] + "..." if len(analysis_with_context) > 200 else analysis_with_context)
-            print("-" * 40)
+            # Check if the response contains an error message
+            if analysis_cli.startswith("Error:"):
+                print(f"× Claude CLI method failed: {analysis_cli}")
+                method_working = None
+            else:
+                print("✓ Claude CLI method working!")
+                print(f"✓ Using model: {cli_analyzer.claude_model}")
+                print("\nSample analysis snippet:")
+                print("-" * 40)
+                print(analysis_cli[:200] + "..." if len(analysis_cli) > 200 else analysis_cli)
+                print("-" * 40)
+                method_working = "cli"
+            
+                # Test context handling with a second analysis
+                print("\nTesting context optimization...")
+                analysis_with_context = cli_analyzer.analyze_code(
+                    "Advanced Code", 
+                    sample_files2, 
+                    context=analysis_cli
+                )
+                
+                # Check if the response contains an error message
+                if analysis_with_context.startswith("Error:"):
+                    print(f"× Context optimization failed: {analysis_with_context}")
+                    method_working = None
+                else:
+                    print("✓ Context optimization working!")
+                    print("\nSample analysis with context snippet:")
+                    print("-" * 40)
+                    print(analysis_with_context[:200] + "..." if len(analysis_with_context) > 200 else analysis_with_context)
+                    print("-" * 40)
             
         except Exception as e:
             print(f"× Claude CLI method failed: {str(e)}")
@@ -92,27 +106,39 @@ class AdvancedCalculator(Calculator):
             try:
                 api_analyzer = ClaudeAnalyzer(method="api")
                 analysis_api = api_analyzer.analyze_code("Sample Code", sample_files)
-                print("✓ Claude API method working!")
-                print(f"✓ Using model: {api_analyzer.claude_model}")
-                print("\nSample analysis snippet:")
-                print("-" * 40)
-                print(analysis_api[:200] + "..." if len(analysis_api) > 200 else analysis_api)
-                print("-" * 40)
-                method_working = "api"
                 
-                # Test context handling with a second analysis
-                print("\nTesting context optimization...")
-                analysis_with_context = api_analyzer.analyze_code(
-                    "Advanced Code", 
-                    sample_files2, 
-                    context=analysis_api
-                )
-                print("✓ Context optimization working!")
-                print("\nSample analysis with context snippet:")
-                print("-" * 40)
-                print(analysis_with_context[:200] + "..." if len(analysis_with_context) > 200 else analysis_with_context)
-                print("-" * 40)
-                
+                # Check if the response contains an error message
+                if analysis_api.startswith("Error:"):
+                    print(f"× Claude API method failed: {analysis_api}")
+                    method_working = None
+                else:
+                    print("✓ Claude API method working!")
+                    print(f"✓ Using model: {api_analyzer.claude_model}")
+                    print("\nSample analysis snippet:")
+                    print("-" * 40)
+                    print(analysis_api[:200] + "..." if len(analysis_api) > 200 else analysis_api)
+                    print("-" * 40)
+                    method_working = "api"
+                    
+                    # Test context handling with a second analysis
+                    print("\nTesting context optimization...")
+                    analysis_with_context = api_analyzer.analyze_code(
+                        "Advanced Code", 
+                        sample_files2, 
+                        context=analysis_api
+                    )
+                    
+                    # Check if the response contains an error message
+                    if analysis_with_context.startswith("Error:"):
+                        print(f"× Context optimization failed: {analysis_with_context}")
+                        method_working = None
+                    else:
+                        print("✓ Context optimization working!")
+                        print("\nSample analysis with context snippet:")
+                        print("-" * 40)
+                        print(analysis_with_context[:200] + "..." if len(analysis_with_context) > 200 else analysis_with_context)
+                        print("-" * 40)
+                    
             except Exception as e:
                 print(f"× Claude API method failed: {str(e)}")
                 method_working = None
@@ -206,13 +232,14 @@ Contains environment-specific settings, feature flags, and application constants
         return False
 
 if __name__ == "__main__":
-    success = test_claude_analyzer()
+    analyzer_success = test_claude_analyzer()
     
     # Also test context optimization independently
     context_success = test_context_optimization()
     
-    if success and context_success:
+    if analyzer_success and context_success:
         print("\nAll tests PASSED! Claude analyzer is working correctly.")
+        sys.exit(0)
     else:
         print("\nSome tests FAILED! Please check the error messages above.")
         sys.exit(1)
