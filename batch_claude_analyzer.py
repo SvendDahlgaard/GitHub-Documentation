@@ -6,6 +6,7 @@ import logging
 import requests
 from typing import Dict, List, Tuple, Any, Optional
 import re
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -350,3 +351,7 @@ class BatchClaudeAnalyzer:
         
         # Join sections back together with blank lines in between
         return "\n\n".join(optimized_context)
+        
+    def _get_timestamp(self):
+        """Get current timestamp for logging and file naming."""
+        return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
