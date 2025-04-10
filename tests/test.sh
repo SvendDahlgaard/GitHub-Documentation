@@ -24,7 +24,7 @@ if [ ! -d "env" ]; then
     
     # Install dependencies
     echo -e "${YELLOW}Installing dependencies...${NC}"
-    pip install -r requirements.txt
+    pip install -r ../requirements.txt
 else
     # Activate virtual environment
     source env/bin/activate
@@ -64,9 +64,12 @@ else
         "mcp")
             run_test mcp_client_test
             ;;
+        "batch")
+            run_test batch_analyzer_test --mock
+            ;;
         *)
             echo -e "${RED}Unknown test: $1${NC}"
-            echo "Available tests: github, section, claude, mcp"
+            echo "Available tests: github, section, claude, mcp, batch"
             exit 1
             ;;
     esac
