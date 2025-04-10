@@ -23,6 +23,9 @@ def test_batch_analyzer():
     
     print("Testing BatchClaudeAnalyzer capabilities...")
     
+    # Ensure test_output directory exists
+    os.makedirs("test_output", exist_ok=True)
+    
     # Sample code sections to analyze
     section1 = {
         "sample1.py": """
@@ -92,6 +95,28 @@ class AdvancedCalculator(Calculator):
                 
             print(f"✓ Successfully analyzed {len(results)} sections in batch")
             
+            # Save results to test_output directory
+            batch_output_path = os.path.join("test_output", "batch_analysis_results.json")
+            with open(batch_output_path, "w") as f:
+                # Store metadata and results
+                output_data = {
+                    "timestamp": batch_analyzer._get_timestamp(),
+                    "query": query,
+                    "sections": [section_name for section_name, _ in sections],
+                    "results": results
+                }
+                json.dump(output_data, f, indent=2)
+            
+            print(f"✓ Saved batch analysis results to {batch_output_path}")
+            
+            # Also save individual markdown files for each section
+            for section_name, analysis in results.items():
+                md_path = os.path.join("test_output", f"batch_analysis_{section_name}.md")
+                with open(md_path, "w") as f:
+                    f.write(f"# Analysis of {section_name}\n\n")
+                    f.write(analysis)
+                print(f"✓ Saved {section_name} analysis to {md_path}")
+            
             # Print sample of results
             for section_name, analysis in results.items():
                 print(f"\nAnalysis for section '{section_name}':")
@@ -123,6 +148,15 @@ class AdvancedCalculator(Calculator):
                 print(analysis[:200] + "..." if len(analysis) > 200 else analysis)
                 print("-" * 40)
                 print("✓ Successfully analyzed section with context")
+                
+                # Save contextualized results
+                context_md_path = os.path.join("test_output", f"batch_analysis_{section_name}_with_context.md")
+                with open(context_md_path, "w") as f:
+                    f.write(f"# Analysis of {section_name} with Context\n\n")
+                    f.write(f"## Context Used\n\n```\n{context_map[section_name]}\n```\n\n")
+                    f.write("## Analysis\n\n")
+                    f.write(analysis)
+                print(f"✓ Saved contextualized analysis to {context_md_path}")
             
             return True
             
@@ -145,6 +179,9 @@ def test_mock_batch():
     """
     print("Testing BatchClaudeAnalyzer with mock responses...")
     
+    # Ensure test_output directory exists
+    os.makedirs("test_output", exist_ok=True)
+    
     # Sample code sections
     sections = [
         ("Section1", {"file1.py": "print('Hello World')"}),
@@ -161,6 +198,11 @@ def test_mock_batch():
             
             # Return mock results
             return {name: f"Mock analysis of {name} section" for name, _ in sections}
+            
+        def _get_timestamp(self):
+            """Helper method to get current timestamp for consistency with real class"""
+            from datetime import datetime
+            return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
     # Use the mock analyzer
     mock_analyzer = MockBatchAnalyzer()
@@ -169,6 +211,21 @@ def test_mock_batch():
     print("\nMock results:")
     for section, analysis in results.items():
         print(f" - {section}: {analysis}")
+    
+    # Save mock results to test_output directory
+    mock_output_path = os.path.join("test_output", "mock_batch_analysis_results.json")
+    with open(mock_output_path, "w") as f:
+        # Store metadata and results
+        output_data = {
+            "timestamp": mock_analyzer._get_timestamp(),
+            "query": "Mock query",
+            "sections": [section_name for section_name, _ in sections],
+            "results": results,
+            "mode": "mock"
+        }
+        json.dump(output_data, f, indent=2)
+    
+    print(f"✓ Saved mock batch analysis results to {mock_output_path}")
     
     return True
 
