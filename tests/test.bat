@@ -59,9 +59,13 @@ IF "%~1"=="" (
         echo %YELLOW%Running mcp_client_test...%NC%
         python mcp_client_test.py
         SET RESULT=!ERRORLEVEL!
+    ) ELSE IF "%~1"=="batch" (
+        echo %YELLOW%Running batch_analyzer_test...%NC%
+        python batch_analyzer_test.py --mock
+        SET RESULT=!ERRORLEVEL!
     ) ELSE (
         echo %RED%Unknown test: %~1%NC%
-        echo Available tests: github, section, claude, mcp
+        echo Available tests: github, section, claude, mcp, batch
         SET RESULT=1
     )
 )
