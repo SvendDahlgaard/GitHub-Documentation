@@ -138,7 +138,7 @@ class MCPSectionAnalyzer(SectionAnalyzer):
     def analyze_repository(self, repo_files: Dict[str, str], 
                          method: AnalysisMethod = AnalysisMethod.STRUCTURAL,
                          max_section_size: int = 15,
-                         min_section_size: int = 1,
+                         min_section_size: int = 2,
                          owner: str = None,
                          repo: str = None) -> List[Tuple[str, Dict[str, str]]]:
         """
