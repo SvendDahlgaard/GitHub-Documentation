@@ -1,5 +1,6 @@
 # Ignore virtual environment
 env/
+wsl_env/
 *.env
 
 # Ignore Python bytecode files
@@ -18,3 +19,9 @@ __pycache__/
 
 # Ignore other generated folders (e.g., analysis)
 analysis/
+
+# Ignore test output
+tests/test_output
+
+#Ignore cache
+cache/
