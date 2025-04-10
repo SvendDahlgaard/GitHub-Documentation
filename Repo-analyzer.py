@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 from direct_github_client import DirectGitHubClient
 from mcp_github_client import MCPGitHubClient
 from claude_analyzer import ClaudeAnalyzer
+from batch_claude_analyzer import BatchClaudeAnalyzer
 from section_analyzer import SectionAnalyzer, AnalysisMethod
 from mcp_section_analyzer import MCPSectionAnalyzer
 
@@ -57,6 +58,10 @@ def analyze_repository(args):
         if args.analysis_method == "api":
             claude_analyzer = ClaudeAnalyzer(method="api")
             logger.info("Using Claude API for analysis")
+        elif args.analysis_method == "batch":
+            claude_analyzer = BatchClaudeAnalyzer(claude_model=args.claude_model, use_prompt_caching=not args.no_prompt_cache)
+            logger.info(f"Using Claude Batch API for analysis with model: {args.claude_model}")
+            logger.info(f"Prompt caching: {'enabled' if not args.no_prompt_cache else 'disabled'}")
         else:
             claude_analyzer = ClaudeAnalyzer(
                 method="cli", 
@@ -128,38 +133,12 @@ def analyze_repository(args):
         with open(os.path.join(args.output_dir, "sections.json"), "w") as f:
             json.dump(section_map, f, indent=2)
         
-        # Analyze each section, maintaining context between sections
-        analyses = {}
-        context = ""
-        
-        for i, (section_name, section_files) in enumerate(sections):
-            logger.info(f"Analyzing section {i+1}/{len(sections)}: {section_name} ({len(section_files)} files)")
-            
-            # Analyze current section with context from previous sections
-            analysis = analyzer.analyze_section(
-                section_name, 
-                section_files, 
-                args.query, 
-                context if args.use_context else None
-            )
-            
-            analyses[section_name] = analysis
-            
-            # Save individual section analysis
-            section_filename = section_name.replace('/', '_').replace('\\', '_')
-            with open(os.path.join(args.output_dir, f"{section_filename}.md"), "w") as f:
-                f.write(f"# {section_name}\n\n")
-                f.write(analysis)
-            
-            # Update context for next section (truncated to avoid too much context)
-            if args.use_context:
-                # Extract key points for context
-                key_points = _extract_key_points(analysis)
-                context += f"\n\nSection '{section_name}':\n{key_points}\n"
-                # Keep context from getting too large
-                context = context[-10000:] if len(context) > 10000 else context
-            
-            logger.info(f"Completed analysis of section: {section_name}")
+        # Special handling for batch analysis
+        if args.analysis_method == "batch":
+            analyses = analyze_sections_batch(sections, args.query, args.use_context, claude_analyzer, args.output_dir)
+        else:
+            # Analyze each section sequentially, maintaining context between sections
+            analyses = analyze_sections_sequential(sections, args.query, args.use_context, analyzer, args.output_dir)
         
         # Create the index file
         index = analyzer.create_section_index(sections, analyses)
@@ -174,6 +153,89 @@ def analyze_repository(args):
         import traceback
         traceback.print_exc()
         sys.exit(1)
+
+def analyze_sections_sequential(sections, query, use_context, analyzer, output_dir):
+    """Analyze sections sequentially with context preservation between sections."""
+    analyses = {}
+    context = ""
+    
+    for i, (section_name, section_files) in enumerate(sections):
+        logger.info(f"Analyzing section {i+1}/{len(sections)}: {section_name} ({len(section_files)} files)")
+        
+        # Analyze current section with context from previous sections
+        analysis = analyzer.analyze_section(
+            section_name, 
+            section_files, 
+            query, 
+            context if use_context else None
+        )
+        
+        analyses[section_name] = analysis
+        
+        # Save individual section analysis
+        section_filename = section_name.replace('/', '_').replace('\\', '_')
+        with open(os.path.join(output_dir, f"{section_filename}.md"), "w") as f:
+            f.write(f"# {section_name}\n\n")
+            f.write(analysis)
+        
+        # Update context for next section (truncated to avoid too much context)
+        if use_context:
+            # Extract key points for context
+            key_points = _extract_key_points(analysis)
+            context += f"\n\nSection '{section_name}':\n{key_points}\n"
+            # Keep context from getting too large
+            context = context[-10000:] if len(context) > 10000 else context
+        
+        logger.info(f"Completed analysis of section: {section_name}")
+    
+    return analyses
+
+def analyze_sections_batch(sections, query, use_context, batch_analyzer, output_dir):
+    """Analyze all sections in a batch for efficiency."""
+    analyses = {}
+    
+    if not use_context:
+        # Simple case: analyze all sections in one batch without context
+        logger.info(f"Analyzing all {len(sections)} sections in a single batch")
+        analyses = batch_analyzer.analyze_sections_batch(sections, query)
+    else:
+        # More complex case: analyze in chunks to maintain context between groups
+        # Group sections into chunks of 5-10 for efficient batching while maintaining context flow
+        chunk_size = 5
+        section_chunks = [sections[i:i+chunk_size] for i in range(0, len(sections), chunk_size)]
+        
+        context_map = {}  # Map section names to their context
+        context = ""
+        
+        for chunk_idx, chunk in enumerate(section_chunks):
+            logger.info(f"Processing batch chunk {chunk_idx+1}/{len(section_chunks)} ({len(chunk)} sections)")
+            
+            # Prepare context for each section in this chunk
+            for section_name, _ in chunk:
+                context_map[section_name] = context.strip()
+            
+            # Process this chunk as a batch
+            chunk_results = batch_analyzer.analyze_sections_batch(chunk, query, context_map)
+            analyses.update(chunk_results)
+            
+            # Update context for the next chunk
+            for section_name, section_files in chunk:
+                if section_name in chunk_results:
+                    analysis = chunk_results[section_name]
+                    
+                    # Save individual section analysis
+                    section_filename = section_name.replace('/', '_').replace('\\', '_')
+                    with open(os.path.join(output_dir, f"{section_filename}.md"), "w") as f:
+                        f.write(f"# {section_name}\n\n")
+                        f.write(analysis)
+                    
+                    # Extract key points for context
+                    key_points = _extract_key_points(analysis)
+                    context += f"\n\nSection '{section_name}':\n{key_points}\n"
+                    # Keep context from getting too large
+                    context = context[-10000:] if len(context) > 10000 else context
+    
+    return analyses
     
 def _extract_key_points(text, max_points=5):
     """Extract key points from analysis for context."""
@@ -203,8 +265,10 @@ def main():
     parser.add_argument("--branch", help="Branch to analyze (default: repository's default branch)")
     parser.add_argument("--claude-executable", default="claude", 
                        help="Path to Claude executable (for CLI method)")
-    parser.add_argument("--analysis-method", choices=["api", "cli"], default="cli",
-                       help="Method to use for Claude analysis: API or CLI (default: cli)")
+    parser.add_argument("--analysis-method", choices=["api", "cli", "batch"], default="cli",
+                       help="Method to use for Claude analysis: API, CLI, or batch (default: cli)")
+    parser.add_argument("--claude-model", default="claude-3-5-haiku-20241022",
+                      help="Claude model to use (default: claude-3-5-haiku-20241022 for cost efficiency)")
     parser.add_argument("--client-type", choices=["direct", "mcp"], default="direct",
                        help="Type of GitHub client to use: direct or MCP (default: direct)")
     parser.add_argument("--section-method", choices=["structural", "dependency", "hybrid"], 
@@ -229,6 +293,8 @@ def main():
                         help="Use context from previous sections in analysis")
     parser.add_argument("--no-cache", action="store_true",
                         help="Disable caching of repository files")
+    parser.add_argument("--no-prompt-cache", action="store_true",
+                        help="Disable prompt caching for batch API (only applies with --analysis-method=batch)")
     parser.add_argument("--verbose", "-v", action="store_true", 
                         help="Enable verbose logging")
     
