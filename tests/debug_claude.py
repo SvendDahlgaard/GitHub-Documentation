@@ -137,6 +137,32 @@ def test_claude_echo():
         if os.path.exists("test_prompt.txt"):
             os.remove("test_prompt.txt")
 
+def test_batch_analyzer():
+    """Test BatchClaudeAnalyzer functionality."""
+    logger.info("Testing BatchClaudeAnalyzer...")
+    
+    try:
+        from batch_claude_analyzer import BatchClaudeAnalyzer
+        logger.info("Successfully imported BatchClaudeAnalyzer")
+        
+        # Check if we have an API key for testing
+        api_key = os.getenv("CLAUDE_API_KEY")
+        if not api_key:
+            logger.error("No CLAUDE_API_KEY found - cannot test BatchClaudeAnalyzer")
+            return
+            
+        # Try to initialize with mock mode
+        mock_analyzer = BatchClaudeAnalyzer(
+            api_key=api_key,
+            claude_model="claude-3-5-haiku-20241022"
+        )
+        logger.info(f"Successfully initialized BatchClaudeAnalyzer with model: {mock_analyzer.claude_model}")
+        
+    except ImportError as e:
+        logger.error(f"Failed to import BatchClaudeAnalyzer: {e}")
+    except Exception as e:
+        logger.error(f"Error initializing BatchClaudeAnalyzer: {e}")
+
 def try_import_claude_analyzer():
     """Try to import the ClaudeAnalyzer class."""
     logger.info("Trying to import ClaudeAnalyzer...")
@@ -178,5 +204,7 @@ if __name__ == "__main__":
     test_claude_echo()
     
     try_import_claude_analyzer()
+    
+    test_batch_analyzer()
     
     logger.info("Debug script completed")
