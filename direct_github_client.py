@@ -4,11 +4,11 @@ import re
 from github import Github
 from typing import List, Dict, Any, Optional
 import logging
-from repo_cache import RepoCache
+from github_client_base import GitHubClientBase
 
 logger = logging.getLogger(__name__)
 
-class DirectGitHubClient:
+class DirectGitHubClient(GitHubClientBase):
     """Client that uses PyGithub to interact with repositories directly."""
     
     def __init__(self, github_token=None, use_cache=True):
@@ -19,51 +19,47 @@ class DirectGitHubClient:
             github_token: GitHub access token (if None, attempts to read from environment)
             use_cache: Whether to use caching to reduce API calls
         """
+        super().__init__(use_cache=use_cache)
+        
         token = github_token or os.getenv('GITHUB_TOKEN')
         if not token:
             raise ValueError("GitHub token is required. Set it in .env file or pass directly.")
         
         self.github = Github(token)
-        self.use_cache = use_cache
-        self.cache = RepoCache() if use_cache else None
     
-    def list_repository_files(self, owner: str, repo: str, path: str = "", branch: str = None) -> List[Dict[str, Any]]:
+    def _list_repository_files(self, owner: str, repo: str, path: str = "", branch: str = None) -> List[Dict[str, Any]]:
         """
-        List files in a repository path """
-        try:
-            repository = self.github.get_repo(f"{owner}/{repo}")
-            print(f"successfully got repository {repository.name}")
+        List files in a repository path.
+        
+        Args:
+            owner: Repository owner
+            repo: Repository name
+            path: Path in the repository
+            branch: Branch to use
+            
+        Returns:
+            List of file information dictionaries
+        """
+        repository = self.github.get_repo(f"{owner}/{repo}")
+        logger.debug(f"Getting contents from repository {repository.name}, path: {path}")
 
-            try:
-                contents = repository.get_contents(path, ref=branch)
-                # Handle both single file and directory cases
-                if not isinstance(contents, list):
-                    contents = [contents]
-                    
-                result = []
-                for content in contents:
-                    item = {
-                        "name": content.name,
-                        "path": content.path,
-                        "type": "file" if content.type == "file" else "dir",
-                        "size": content.size
-                    }
-                    result.append(item)
-                return result
-            except Exception as e:
-                error_msg = str(e)
-                print(f"Error listing contents at '{path}': {error_msg}")
-                raise e
-        except Exception as e:
-            error_msg = str(e)
-            print(f"Error accessing repository '{owner}/{repo}': {error_msg}")
-            if "401" in error_msg:
-                print("Authentication failed. Check your GitHub token.")
-            elif "404" in error_msg:
-                print(f"Repository {owner}/{repo} not found or no access.")
-            raise e
+        contents = repository.get_contents(path, ref=branch)
+        # Handle both single file and directory cases
+        if not isinstance(contents, list):
+            contents = [contents]
+            
+        result = []
+        for content in contents:
+            item = {
+                "name": content.name,
+                "path": content.path,
+                "type": "file" if content.type == "file" else "dir",
+                "size": content.size
+            }
+            result.append(item)
+        return result
     
-    def get_file_content(self, owner: str, repo: str, path: str, branch: str = None) -> str:
+    def _get_file_content(self, owner: str, repo: str, path: str, branch: str = None) -> str:
         """
         Get the content of a file.
         
@@ -71,139 +67,61 @@ class DirectGitHubClient:
             owner: Repository owner
             repo: Repository name
             path: Path to the file
-            branch: Branch to use (default: repository default branch)
+            branch: Branch to use
             
         Returns:
             Content of the file as string
         """
-        try:
-            repository = self.github.get_repo(f"{owner}/{repo}")
-            content = repository.get_contents(path, ref=branch)
-            
-            if content.encoding == "base64":
-                return base64.b64decode(content.content).decode('utf-8')
-            return content.content
-        except Exception as e:
-            logger.error(f"Error getting content for file '{path}': {e}")
-            raise
+        repository = self.github.get_repo(f"{owner}/{repo}")
+        content = repository.get_contents(path, ref=branch)
+        
+        if content.encoding == "base64":
+            return base64.b64decode(content.content).decode('utf-8')
+        return content.content
     
-    def get_repository_structure(self, owner: str, repo: str, branch: str = None, 
-                               ignore_dirs: List[str] = None, max_file_size: int = 500000,
-                               include_patterns: List[str] = None,
-                               extensions: List[str] = None, 
-                               force_refresh: bool = False) -> Dict[str, str]:
+    def _get_default_branch(self, owner: str, repo: str) -> str:
         """
-        Recursively get the structure of a repository.
+        Get the default branch for a repository.
         
         Args:
             owner: Repository owner
             repo: Repository name
-            branch: Branch to analyze
-            ignore_dirs: Directories to ignore
-            max_file_size: Maximum file size to include
-            include_patterns: Patterns to specifically include
-            extensions: File extensions to include
-            force_refresh: Whether to force a refresh of the cache
             
         Returns:
-            Dictionary mapping file paths to contents
+            Name of the default branch
         """
-        # Check if we can use cached data
-        if self.use_cache and not force_refresh:
-            cached_files = self.cache.get_repo_files(owner, repo, branch)
-            if cached_files:
-                logger.info(f"Using cached repository structure for {owner}/{repo}")
-                return cached_files
-
-        try:
-            repository = self.github.get_repo(f"{owner}/{repo}")
-            # If branch is None, use the default branch
-            if branch is None:
-                branch = repository.default_branch
-                print(f"Using default branch: {branch}")
-        except Exception as e:
-            print(f"Error accessing repository '{owner}/{repo}': {str(e)}")
-            print(f"Error type: {type(e).__name__}")
-            if hasattr(e, 'status'):
-                print(f"HTTP Status: {e.status}")
-            # Re-raise the exception to be handled by the calling method
-            raise
-
-        if ignore_dirs is None:
-            ignore_dirs = ['.git', 'node_modules', '__pycache__', 'dist', 'build']
+        repository = self.github.get_repo(f"{owner}/{repo}")
+        default_branch = repository.default_branch
+        logger.info(f"Using default branch: {default_branch}")
+        return default_branch
+    
+    def get_repository_stats(self, owner: str, repo: str) -> Dict[str, Any]:
+        """
+        Get repository statistics and metadata.
+        
+        Args:
+            owner: Repository owner
+            repo: Repository name
             
-        result = {}
-        visited = set()
+        Returns:
+            Dictionary with repository statistics
+        """
+        repository = self.github.get_repo(f"{owner}/{repo}")
         
-        binary_extensions = [
-            '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.pdf', '.zip', 
-            '.gz', '.tar', '.class', '.exe', '.dll', '.so'
-        ]
+        stats = {
+            "name": repository.name,
+            "full_name": repository.full_name,
+            "description": repository.description,
+            "default_branch": repository.default_branch,
+            "language": repository.language,
+            "stars": repository.stargazers_count,
+            "forks": repository.forks_count,
+            "open_issues": repository.open_issues_count,
+            "created_at": repository.created_at.isoformat() if repository.created_at else None,
+            "updated_at": repository.updated_at.isoformat() if repository.updated_at else None,
+            "is_private": repository.private,
+            "is_archived": repository.archived,
+            "license": repository.license.name if repository.license else None
+        }
         
-        def should_include_file(path: str) -> bool:
-            # Check extension filter
-            if extensions:
-                if not any(path.endswith(ext) for ext in extensions):
-                    # Check include patterns as override
-                    if include_patterns and any(pattern in path for pattern in include_patterns):
-                        return True
-                    return False
-                
-            # Skip binary files
-            if any(path.endswith(ext) for ext in binary_extensions):
-                return False
-                
-            return True
-        
-        def traverse_dir(path: str = ""):
-            if path in visited:
-                return
-                
-            visited.add(path)
-            
-            try:
-                items = self.list_repository_files(owner, repo, path, branch)
-            except Exception as e:
-                logger.error(f"Error listing files in {path}: {e}")
-                return
-                
-            for item in items:
-                item_path = item.get("path", "")
-                item_type = item.get("type", "")
-                item_size = item.get("size", 0)
-                
-                # Skip ignored directories and their children
-                if any(ignored_dir in item_path for ignored_dir in ignore_dirs):
-                    logger.debug(f"Skipping ignored directory: {item_path}")
-                    continue
-                
-                if item_type == "dir":
-                    # Recursively process directories
-                    traverse_dir(item_path)
-                    
-                elif item_type == "file":
-                    # Apply filters
-                    if item_size > max_file_size:
-                        logger.debug(f"Skipping large file: {item_path} ({item_size} bytes)")
-                        continue
-                        
-                    if not should_include_file(item_path):
-                        logger.debug(f"Skipping file based on filters: {item_path}")
-                        continue
-                    
-                    # Fetch file content
-                    try:
-                        content = self.get_file_content(owner, repo, item_path, branch)
-                        result[item_path] = content
-                        logger.debug(f"Added file: {item_path}")
-                    except Exception as e:
-                        logger.error(f"Error getting content for {item_path}: {e}")
-        
-        # Start traversal from root
-        traverse_dir()
-        
-        # Cache the results if enabled
-        if self.use_cache and result:
-            self.cache.cache_repo_files(owner, repo, result, branch)
-        
-        return result
+        return stats
