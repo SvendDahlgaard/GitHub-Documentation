@@ -15,6 +15,7 @@ from claude_analyzer import ClaudeAnalyzer
 from batch_claude_analyzer import BatchClaudeAnalyzer
 from section_analyzer import SectionAnalyzer, AnalysisMethod
 from mcp_section_analyzer import MCPSectionAnalyzer
+from repo_cache import RepoCache
 
 # Load environment variables from .env file
 load_dotenv()
@@ -38,6 +39,17 @@ def get_analysis_method(method_name: str) -> AnalysisMethod:
 
 def analyze_repository(args):
     """Main function to analyze a repository by sections."""
+    # Initialize cache
+    cache = RepoCache() if not args.no_cache else None
+    
+    # First, check if we can use cached structure
+    repo_structure = None
+    if cache and not args.no_cache:
+        logger.info(f"Checking for cached repository structure for {args.owner}/{args.repo}")
+        repo_structure = cache.get_repo_structure(args.owner, args.repo, args.branch)
+        if repo_structure:
+            logger.info(f"Found cached repository structure with {repo_structure.get('file_count', 0)} files")
+    
     # Initialize GitHub client
     try:
         if args.client_type == "mcp":
@@ -72,9 +84,9 @@ def analyze_repository(args):
         logger.error(f"Failed to initialize Claude analyzer: {e}")
         sys.exit(1)
         
-    # Initialize section analyzer
+    # Initialize section analyzer - always use MCP section analyzer if available
     if args.client_type == "mcp":
-        analyzer = MCPSectionAnalyzer(claude_analyzer, github_client)
+        analyzer = MCPSectionAnalyzer(claude_analyzer, github_client, use_cache=not args.no_cache)
         logger.info("Using enhanced MCP section analyzer")
     else:
         analyzer = SectionAnalyzer(claude_analyzer)
@@ -84,17 +96,28 @@ def analyze_repository(args):
     os.makedirs(args.output_dir, exist_ok=True)
     
     try:
-        # Get repository files
-        logger.info(f"Fetching repository structure for {args.owner}/{args.repo}")
-        repo_files = github_client.get_repository_structure(
-            args.owner, 
-            args.repo, 
-            branch=args.branch,
-            ignore_dirs=args.ignore,
-            max_file_size=args.max_file_size,
-            include_patterns=args.include_files,
-            extensions=args.extensions
-        )
+        # Get repository files - first check cache if we can use it
+        repo_files = None
+        if cache and not args.no_cache and not args.force_refresh:
+            repo_files = cache.get_repo_files(args.owner, args.repo, args.branch)
+            if repo_files:
+                logger.info(f"Using {len(repo_files)} files from cache for {args.owner}/{args.repo}")
+            
+        # If not in cache or cache disabled, fetch from GitHub
+        if not repo_files:
+            logger.info(f"Fetching repository structure for {args.owner}/{args.repo}")
+            repo_files = github_client.get_repository_structure(
+                args.owner, 
+                args.repo, 
+                branch=args.branch,
+                ignore_dirs=args.ignore,
+                max_file_size=args.max_file_size,
+                include_patterns=args.include_files,
+                extensions=args.extensions,
+                force_refresh=args.force_refresh,
+                batch_size=args.batch_size,
+                max_workers=args.max_workers
+            )
         
         if not repo_files:
             logger.error("No files found or all files were filtered out")
@@ -106,16 +129,30 @@ def analyze_repository(args):
         section_method = get_analysis_method(args.section_method)
         logger.info(f"Using {section_method.name} analysis method for sections")
         
+        # Try to get repository metadata 
+        if cache and not args.no_cache:
+            try:
+                repo_metadata = github_client.get_repository_stats(args.owner, args.repo)
+                if repo_metadata:
+                    logger.info(f"Retrieved repository metadata for {args.owner}/{args.repo}")
+                    cache.save_repo_metadata(args.owner, args.repo, repo_metadata, args.branch)
+            except Exception as e:
+                logger.warning(f"Could not retrieve repository metadata: {e}")
+        
         # Identify logical sections
-        if args.client_type == "mcp":
-            # Use enhanced analysis with owner/repo information
+        sections = None
+        
+        # If using MCP section analyzer, we can use enhanced analysis with owner/repo information
+        if isinstance(analyzer, MCPSectionAnalyzer):
+            logger.info("Using enhanced section analysis with repository context")
             sections = analyzer.analyze_repository(
                 repo_files, 
                 method=section_method,
                 max_section_size=args.max_section_size,
                 min_section_size=args.min_section_size,
                 owner=args.owner,
-                repo=args.repo
+                repo=args.repo,
+                branch=args.branch
             )
         else:
             # Use standard analysis
@@ -269,11 +306,11 @@ def main():
                        help="Method to use for Claude analysis: API, CLI, or batch (default: cli)")
     parser.add_argument("--claude-model", default="claude-3-5-haiku-20241022",
                       help="Claude model to use (default: claude-3-5-haiku-20241022 for cost efficiency)")
-    parser.add_argument("--client-type", choices=["direct", "mcp"], default="direct",
-                       help="Type of GitHub client to use: direct or MCP (default: direct)")
+    parser.add_argument("--client-type", choices=["direct", "mcp"], default="mcp",
+                       help="Type of GitHub client to use: direct or MCP (default: mcp)")
     parser.add_argument("--section-method", choices=["structural", "dependency", "hybrid"], 
-                       default="structural",
-                       help="Method to use for sectioning the repository (default: structural)")
+                       default="dependency",
+                       help="Method to use for sectioning the repository (default: dependency)")
     parser.add_argument("--max-section-size", type=int, default=15,
                         help="Maximum number of files in a section before subdivision (default: 15)")
     parser.add_argument("--min-section-size", type=int, default=2,
@@ -295,6 +332,12 @@ def main():
                         help="Disable caching of repository files")
     parser.add_argument("--no-prompt-cache", action="store_true",
                         help="Disable prompt caching for batch API (only applies with --analysis-method=batch)")
+    parser.add_argument("--force-refresh", action="store_true",
+                        help="Force refresh of repository data from GitHub, bypassing cache")
+    parser.add_argument("--batch-size", type=int, default=20,
+                        help="Number of files to process in each batch during extraction (default: 20)")
+    parser.add_argument("--max-workers", type=int, default=5,
+                        help="Maximum number of concurrent workers for file extraction (default: 5)")
     parser.add_argument("--verbose", "-v", action="store_true", 
                         help="Enable verbose logging")
     
