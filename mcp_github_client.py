@@ -6,11 +6,11 @@ import subprocess
 import logging
 import tempfile
 from typing import List, Dict, Any, Optional, Set
-from repo_cache import RepoCache
+from github_client_base import GitHubClientBase
 
 logger = logging.getLogger(__name__)
 
-class MCPGitHubClient:
+class MCPGitHubClient(GitHubClientBase):
     """Client that uses GitHub MCP server to interact with repositories."""
     
     def __init__(self, use_cache=True, claude_executable=None):
@@ -21,9 +21,8 @@ class MCPGitHubClient:
             use_cache: Whether to use caching to reduce API calls
             claude_executable: Path to Claude executable for MCP commands
         """
+        super().__init__(use_cache=use_cache)
         self.claude_executable = claude_executable or "claude"
-        self.use_cache = use_cache
-        self.cache = RepoCache() if use_cache else None
     
     def call_mcp_tool(self, tool_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -83,9 +82,9 @@ class MCPGitHubClient:
             logger.error(f"Error calling GitHub MCP tool {tool_name}: {e}")
             raise
     
-    def list_repository_files(self, owner: str, repo: str, path: str = "", branch: str = None) -> List[Dict[str, Any]]:
+    def _list_repository_files(self, owner: str, repo: str, path: str = "", branch: str = None) -> List[Dict[str, Any]]:
         """
-        List files in a repository path
+        List files in a repository path using MCP.
         
         Args:
             owner: Repository owner
@@ -96,36 +95,31 @@ class MCPGitHubClient:
         Returns:
             List of file information dictionaries
         """
-        try:
-            contents = self.call_mcp_tool("get_file_contents", {
-                "owner": owner,
-                "repo": repo,
-                "path": path,
-                "branch": branch
-            })
+        contents = self.call_mcp_tool("get_file_contents", {
+            "owner": owner,
+            "repo": repo,
+            "path": path,
+            "branch": branch
+        })
+        
+        # Handle both single file and directory cases
+        if not isinstance(contents, list):
+            contents = [contents]
             
-            # Handle both single file and directory cases
-            if not isinstance(contents, list):
-                contents = [contents]
-                
-            result = []
-            for content in contents:
-                item = {
-                    "name": content.get("name", ""),
-                    "path": content.get("path", ""),
-                    "type": "file" if content.get("type") == "file" else "dir",
-                    "size": content.get("size", 0)
-                }
-                result.append(item)
-            return result
-        except Exception as e:
-            error_msg = str(e)
-            logger.error(f"Error listing contents at '{path}': {error_msg}")
-            raise e
+        result = []
+        for content in contents:
+            item = {
+                "name": content.get("name", ""),
+                "path": content.get("path", ""),
+                "type": "file" if content.get("type") == "file" else "dir",
+                "size": content.get("size", 0)
+            }
+            result.append(item)
+        return result
     
-    def get_file_content(self, owner: str, repo: str, path: str, branch: str = None) -> str:
+    def _get_file_content(self, owner: str, repo: str, path: str, branch: str = None) -> str:
         """
-        Get the content of a file.
+        Get the content of a file using MCP.
         
         Args:
             owner: Repository owner
@@ -136,145 +130,49 @@ class MCPGitHubClient:
         Returns:
             Content of the file as string
         """
-        try:
-            content = self.call_mcp_tool("get_file_contents", {
-                "owner": owner,
-                "repo": repo,
-                "path": path,
-                "branch": branch
-            })
-            
-            # The content is returned as a base64-encoded string
-            if "content" in content and content.get("encoding") == "base64":
-                return base64.b64decode(content["content"]).decode('utf-8')
-            
-            # If it's not encoded or we're dealing with an unexpected response format
-            return content.get("content", "")
-        except Exception as e:
-            logger.error(f"Error getting content for file '{path}': {e}")
-            raise
+        content = self.call_mcp_tool("get_file_contents", {
+            "owner": owner,
+            "repo": repo,
+            "path": path,
+            "branch": branch
+        })
+        
+        # The content is returned as a base64-encoded string
+        if "content" in content and content.get("encoding") == "base64":
+            return base64.b64decode(content["content"]).decode('utf-8')
+        
+        # If it's not encoded or we're dealing with an unexpected response format
+        return content.get("content", "")
     
-    def get_repository_structure(self, owner: str, repo: str, branch: str = None, 
-                               ignore_dirs: List[str] = None, max_file_size: int = 500000,
-                               include_patterns: List[str] = None,
-                               extensions: List[str] = None, 
-                               force_refresh: bool = False) -> Dict[str, str]:
+    def _get_default_branch(self, owner: str, repo: str) -> str:
         """
-        Recursively get the structure of a repository.
+        Get the default branch for a repository.
         
         Args:
             owner: Repository owner
             repo: Repository name
-            branch: Branch to analyze
-            ignore_dirs: Directories to ignore
-            max_file_size: Maximum file size to include
-            include_patterns: Patterns to specifically include
-            extensions: File extensions to include
-            force_refresh: Whether to force a refresh of the cache
             
         Returns:
-            Dictionary mapping file paths to contents
+            Name of the default branch
         """
-        # Check if we can use cached data
-        if self.use_cache and not force_refresh:
-            cached_files = self.cache.get_repo_files(owner, repo, branch)
-            if cached_files:
-                logger.info(f"Using cached repository structure for {owner}/{repo}")
-                return cached_files
-
         try:
-            # If branch is None, try to get the default branch
-            if branch is None:
-                repo_info = self.call_mcp_tool("search_repositories", {
-                    "query": f"repo:{owner}/{repo}"
-                })
-                if repo_info.get("total_count", 0) > 0:
-                    items = repo_info.get("items", [])
-                    if items and len(items) > 0:
-                        branch = items[0].get("default_branch")
+            repo_info = self.call_mcp_tool("search_repositories", {
+                "query": f"repo:{owner}/{repo}"
+            })
+            
+            if repo_info.get("total_count", 0) > 0:
+                items = repo_info.get("items", [])
+                if items and len(items) > 0:
+                    branch = items[0].get("default_branch")
+                    if branch:
                         logger.info(f"Using default branch: {branch}")
+                        return branch
         except Exception as e:
             logger.error(f"Error getting default branch: {e}")
-            # Continue with branch=None, which should work with the API
-
-        if ignore_dirs is None:
-            ignore_dirs = ['.git', 'node_modules', '__pycache__', 'dist', 'build']
-            
-        result = {}
-        visited = set()
         
-        binary_extensions = [
-            '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.pdf', '.zip', 
-            '.gz', '.tar', '.class', '.exe', '.dll', '.so'
-        ]
-        
-        def should_include_file(path: str) -> bool:
-            # Check extension filter
-            if extensions:
-                if not any(path.endswith(ext) for ext in extensions):
-                    # Check include patterns as override
-                    if include_patterns and any(pattern in path for pattern in include_patterns):
-                        return True
-                    return False
-                
-            # Skip binary files
-            if any(path.endswith(ext) for ext in binary_extensions):
-                return False
-                
-            return True
-        
-        def traverse_dir(path: str = ""):
-            if path in visited:
-                return
-                
-            visited.add(path)
-            
-            try:
-                items = self.list_repository_files(owner, repo, path, branch)
-            except Exception as e:
-                logger.error(f"Error listing files in {path}: {e}")
-                return
-                
-            for item in items:
-                item_path = item.get("path", "")
-                item_type = item.get("type", "")
-                item_size = item.get("size", 0)
-                
-                # Skip ignored directories and their children
-                if any(ignored_dir in item_path for ignored_dir in ignore_dirs):
-                    logger.debug(f"Skipping ignored directory: {item_path}")
-                    continue
-                
-                if item_type == "dir":
-                    # Recursively process directories
-                    traverse_dir(item_path)
-                    
-                elif item_type == "file":
-                    # Apply filters
-                    if item_size > max_file_size:
-                        logger.debug(f"Skipping large file: {item_path} ({item_size} bytes)")
-                        continue
-                        
-                    if not should_include_file(item_path):
-                        logger.debug(f"Skipping file based on filters: {item_path}")
-                        continue
-                    
-                    # Fetch file content
-                    try:
-                        content = self.get_file_content(owner, repo, item_path, branch)
-                        result[item_path] = content
-                        logger.debug(f"Added file: {item_path}")
-                    except Exception as e:
-                        logger.error(f"Error getting content for {item_path}: {e}")
-        
-        # Start traversal from root
-        traverse_dir()
-        
-        # Cache the results if enabled
-        if self.use_cache and result:
-            self.cache.cache_repo_files(owner, repo, result, branch)
-        
-        return result
+        # Fallback to 'main' if we couldn't determine the default branch
+        logger.info("Could not determine default branch, using 'main'")
+        return "main"
     
     def search_code(self, owner: str, repo: str, query: str, max_results: int = 100) -> List[Dict[str, Any]]:
         """
@@ -378,3 +276,49 @@ class MCPGitHubClient:
         except Exception as e:
             logger.error(f"Error searching references for {filepath}: {e}")
             return set()
+    
+    def get_repository_stats(self, owner: str, repo: str) -> Dict[str, Any]:
+        """
+        Get repository statistics and metadata.
+        
+        Args:
+            owner: Repository owner
+            repo: Repository name
+            
+        Returns:
+            Dictionary with repository statistics
+        """
+        try:
+            repo_info = self.call_mcp_tool("search_repositories", {
+                "query": f"repo:{owner}/{repo}"
+            })
+            
+            if repo_info.get("total_count", 0) > 0:
+                items = repo_info.get("items", [])
+                if items and len(items) > 0:
+                    repo_data = items[0]
+                    
+                    stats = {
+                        "name": repo_data.get("name"),
+                        "full_name": repo_data.get("full_name"),
+                        "description": repo_data.get("description"),
+                        "default_branch": repo_data.get("default_branch"),
+                        "language": repo_data.get("language"),
+                        "stars": repo_data.get("stargazers_count"),
+                        "forks": repo_data.get("forks_count"),
+                        "open_issues": repo_data.get("open_issues_count"),
+                        "created_at": repo_data.get("created_at"),
+                        "updated_at": repo_data.get("updated_at"),
+                        "is_private": repo_data.get("private", False),
+                        "is_archived": repo_data.get("archived", False),
+                        "license": repo_data.get("license", {}).get("name") if repo_data.get("license") else None
+                    }
+                    
+                    return stats
+            
+            logger.warning(f"Could not get repository stats for {owner}/{repo}")
+            return {}
+            
+        except Exception as e:
+            logger.error(f"Error getting repository stats: {e}")
+            return {}
