@@ -4,66 +4,136 @@ import re
 import json
 import subprocess
 import logging
-import tempfile
 import time
 from typing import List, Dict, Any, Optional, Set
+import threading
+from queue import Queue, Empty
 from github_client_base import GitHubClientBase
 
 logger = logging.getLogger(__name__)
 
 class MCPGitHubClient(GitHubClientBase):
-    """Client that uses GitHub MCP server to interact with repositories."""
+    """Client that uses GitHub MCP server to interact with repositories directly."""
     
-    def __init__(self, use_cache=True, claude_executable=None, timeout=240):
+    def __init__(self, use_cache=True, timeout=240):
         """
-        Initialize client with Claude CLI for MCP commands.
+        Initialize client with direct GitHub MCP server integration.
         
         Args:
             use_cache: Whether to use caching to reduce API calls
-            claude_executable: Path to Claude executable for MCP commands
             timeout: Default timeout in seconds for MCP calls
         """
         super().__init__(use_cache=use_cache)
-        self.claude_executable = claude_executable or "claude"
         self.timeout = timeout
         
         # Set the GitHub personal access token from environment if available
-        github_token = os.getenv("GITHUB_TOKEN")
-        if github_token:
-            os.environ["GITHUB_PERSONAL_ACCESS_TOKEN"] = github_token
-            logger.info("Using GitHub token from GITHUB_TOKEN environment variable")
-        else:
+        self.github_token = os.getenv("GITHUB_TOKEN")
+        if not self.github_token:
             logger.warning("No GITHUB_TOKEN environment variable found. GitHub MCP may not authenticate properly.")
         
-        # Verify Claude CLI is available
-        self._check_claude_cli()
+        # Verify MCP GitHub server is available
+        self._check_mcp_github_server()
+        
+        # Start the server process
+        self._start_mcp_server()
+
+        # Counter for request IDs
+        self.request_id = 0
     
-    def _check_claude_cli(self):
-        """Verify Claude CLI is available and print its version."""
+    def _check_mcp_github_server(self):
+        """Verify the MCP GitHub server is installed."""
         try:
             result = subprocess.run(
-                [self.claude_executable, "--version"],
+                ["npx", "-y", "@modelcontextprotocol/server-github", "--version"],
                 capture_output=True,
                 text=True,
                 timeout=10
             )
             
             if result.returncode == 0:
-                logger.info(f"Claude CLI version: {result.stdout.strip()}")
+                logger.info(f"MCP GitHub server is available: {result.stdout.strip()}")
             else:
-                logger.warning(f"Claude CLI test returned non-zero exit code: {result.returncode}")
-                logger.warning(f"Claude CLI stderr: {result.stderr}")
+                logger.warning(f"MCP GitHub server check returned non-zero exit code: {result.returncode}")
+                logger.warning(f"MCP GitHub server stderr: {result.stderr}")
+                
         except FileNotFoundError:
-            logger.error(f"Claude CLI executable not found: {self.claude_executable}")
-            logger.info("Please install Claude CLI using: npm install -g @anthropic-ai/claude-cli")
-        except subprocess.TimeoutExpired:
-            logger.warning("Claude CLI version check timed out, this might indicate slow response times")
+            logger.error("NPX command not found. Please install Node.js and npm.")
+            logger.info("Install with: npm install -g @modelcontextprotocol/server-github")
         except Exception as e:
-            logger.warning(f"Error checking Claude CLI: {e}")
+            logger.warning(f"Error checking MCP GitHub server: {e}")
     
-    def call_mcp_tool(self, tool_name: str, params: Dict[str, Any], custom_timeout: Optional[int] = None) -> Dict[str, Any]:
+    def _start_mcp_server(self):
+        """Start the MCP GitHub server as a subprocess."""
+        try:
+            # Create command to start the server
+            cmd = ["npx", "-y", "@modelcontextprotocol/server-github"]
+            
+            # Add logging
+            logger.info(f"Starting MCP GitHub server with command: {' '.join(cmd)}")
+            
+            # Start the server process
+            self.server_process = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,  # Line buffered
+                env={**os.environ, "GITHUB_PERSONAL_ACCESS_TOKEN": self.github_token}
+            )
+            
+            # Set up queues for responses and errors
+            self.response_queue = Queue()
+            self.error_queue = Queue()
+            
+            # Start reader threads
+            self.stdout_thread = threading.Thread(
+                target=self._read_stream, 
+                args=(self.server_process.stdout, self.response_queue),
+                daemon=True
+            )
+            self.stderr_thread = threading.Thread(
+                target=self._read_stream, 
+                args=(self.server_process.stderr, self.error_queue),
+                daemon=True
+            )
+            
+            self.stdout_thread.start()
+            self.stderr_thread.start()
+            
+            # Wait for server to initialize (give it a moment)
+            time.sleep(1)
+            
+            logger.info("Started MCP GitHub server successfully")
+            
+        except Exception as e:
+            logger.error(f"Failed to start MCP GitHub server: {e}")
+            raise
+
+    def _read_stream(self, stream, queue):
+        """Read from a stream and put lines into a queue."""
+        try:
+            for line in iter(stream.readline, ''):
+                if line.strip():
+                    queue.put(line.strip())
+        except (ValueError, IOError) as e:
+            logger.error(f"Error reading from stream: {e}")
+        finally:
+            logger.debug("Stream reader thread exiting")
+    
+    def __del__(self):
+        """Clean up server process when done."""
+        if hasattr(self, 'server_process'):
+            try:
+                self.server_process.terminate()
+                logger.info("Terminated MCP GitHub server process")
+            except:
+                pass
+    
+    def call_mcp_tool(self, tool_name: str, params: Dict[str, Any], 
+                      custom_timeout: Optional[int] = None) -> Dict[str, Any]:
         """
-        Call a GitHub MCP tool using Claude CLI.
+        Call a GitHub MCP tool using the server process.
         
         Args:
             tool_name: Name of the MCP tool to call
@@ -73,95 +143,100 @@ class MCPGitHubClient(GitHubClientBase):
         Returns:
             Response from the tool
         """
-        # Use custom timeout if provided, otherwise use the default
-        timeout = custom_timeout if custom_timeout is not None else self.timeout
-        logger.debug(f"Calling MCP tool '{tool_name}' with timeout {timeout}s")
-        logger.debug(f"Parameters: {json.dumps(params, indent=2)}")
-        
+        timeout = custom_timeout or self.timeout
         try:
-            with tempfile.NamedTemporaryFile(suffix='.txt', mode='w+', delete=False) as temp_file:
-                # Store temp file path for cleanup
-                temp_file_path = temp_file.name
-                
-                # Create the prompt for Claude to use the GitHub MCP tool
-                prompt = f"""
-                I need to use the GitHub MCP tool "{tool_name}" with the following parameters:
-                ```json
-                {json.dumps(params, indent=2)}
-                ```
-                
-                Please execute this MCP tool and return only the raw JSON response without any additional text, explanation, or formatting.
-                """
-                
-                temp_file.write(prompt)
-                temp_file.flush()
-                
-                # Log command for debugging
-                cmd = [self.claude_executable, "send", "--print", temp_file_path]
-                logger.debug(f"Executing command: {' '.join(cmd)}")
-                
-                # Record start time
-                start_time = time.time()
-                logger.info(f"Starting MCP tool call to '{tool_name}' at {time.strftime('%H:%M:%S')}")
-                
-                # Execute the Claude CLI command
+            # Drain the error queue to get any previous errors
+            while not self.error_queue.empty():
+                error = self.error_queue.get_nowait()
+                logger.debug(f"Drained previous error: {error}")
+            
+            # Drain the response queue to clear any previous responses
+            while not self.response_queue.empty():
+                resp = self.response_queue.get_nowait()
+                logger.debug(f"Drained previous response: {resp}")
+
+            # Increase and get the request ID
+            self.request_id += 1
+            request_id = str(self.request_id)
+            
+            # Prepare the request message
+            request = {
+                "type": "call_tool",
+                "id": request_id,
+                "params": {
+                    "name": tool_name,
+                    "arguments": params
+                }
+            }
+            
+            # Log the request for debugging
+            logger.info(f"Calling MCP tool '{tool_name}' with request ID {request_id}")
+            logger.debug(f"Request parameters: {json.dumps(params, indent=2)}")
+            
+            # Convert request to JSON and send to the server
+            request_json = json.dumps(request) + '\n'
+            self.server_process.stdin.write(request_json)
+            self.server_process.stdin.flush()
+            
+            # Wait for response with timeout
+            start_time = time.time()
+            response = None
+            
+            while time.time() - start_time < timeout:
+                # Check for errors
                 try:
-                    result = subprocess.run(
-                        cmd,
-                        capture_output=True,
-                        text=True,
-                        timeout=timeout
-                    )
-                    
-                    execution_time = time.time() - start_time
-                    logger.info(f"MCP tool call completed in {execution_time:.2f} seconds")
-                    
-                    if result.returncode != 0:
-                        logger.error(f"Claude MCP call error: {result.stderr}")
-                        logger.error(f"Exit code: {result.returncode}")
-                        logger.error(f"Stdout: {result.stdout[:500]}...")
-                        raise Exception(f"Failed to call GitHub MCP tool {tool_name}")
-                    
-                    # Parse the JSON response from Claude's output
-                    output = result.stdout
-                    logger.debug(f"Raw output: {output[:1000]}...")
-                    
-                    # Extract JSON from the output (might be in code blocks)
-                    json_match = re.search(r'```(?:json)?\n([\s\S]*?)\n```', output)
-                    if json_match:
-                        json_str = json_match.group(1).strip()
-                        logger.debug("Found JSON in code block")
-                    else:
-                        # Try to find raw JSON if not in code blocks
-                        json_str = output.strip()
-                        logger.debug("No JSON code block found, using raw output")
-                    
-                    # Parse the JSON string
+                    error = self.error_queue.get_nowait()
+                    logger.warning(f"Server error: {error}")
+                except Empty:
+                    pass
+                
+                # Check for response
+                try:
+                    response_line = self.response_queue.get(timeout=0.1)
                     try:
-                        result_data = json.loads(json_str)
-                        return result_data
-                    except json.JSONDecodeError as e:
-                        logger.error(f"Failed to parse JSON from response: {e}")
-                        logger.error(f"JSON string: {json_str[:500]}...")
-                        
-                        # Check if the output contains an authentication error message
-                        if "Invalid API key" in output or "Please run /login" in output:
-                            logger.error("Authentication error with Claude CLI. Please run 'claude login' to authenticate.")
-                            raise Exception(f"Claude CLI authentication failed. Please run 'claude login' to authenticate.")
-                        
-                        raise Exception(f"Invalid JSON response from GitHub MCP tool {tool_name}")
+                        response_data = json.loads(response_line)
+                        if "id" in response_data and response_data["id"] == request_id:
+                            response = response_data
+                            break
+                        else:
+                            logger.debug(f"Received response for different request: {response_line}")
+                    except json.JSONDecodeError:
+                        logger.warning(f"Invalid JSON response: {response_line}")
+                except Empty:
+                    # No response yet, continue waiting
+                    pass
+            
+            if response is None:
+                raise Exception(f"Timeout calling MCP tool {tool_name} after {timeout} seconds")
+            
+            # Process the response
+            if "error" in response:
+                logger.error(f"MCP tool call error: {response['error']}")
+                raise Exception(f"Failed to call GitHub MCP tool {tool_name}: {response['error']}")
+            
+            # Extract the result from the response
+            try:
+                if "result" in response:
+                    result = response["result"]
+                    # For text content, the result is usually in the first content item
+                    if "content" in result and len(result["content"]) > 0:
+                        content_items = result["content"]
+                        for item in content_items:
+                            if item["type"] == "text":
+                                try:
+                                    return json.loads(item["text"])
+                                except json.JSONDecodeError:
+                                    # If it's not JSON, return the text directly
+                                    return {"text": item["text"]}
                     
-                except subprocess.TimeoutExpired:
-                    elapsed_time = time.time() - start_time
-                    logger.error(f"MCP tool call timed out after {elapsed_time:.2f} seconds (timeout was {timeout}s)")
-                    raise Exception(f"Timeout calling GitHub MCP tool {tool_name}")
-                finally:
-                    # Clean up the temp file
-                    try:
-                        if os.path.exists(temp_file_path):
-                            os.unlink(temp_file_path)
-                    except Exception as e:
-                        logger.warning(f"Failed to delete temp file: {e}")
+                    return result
+                else:
+                    logger.warning(f"Response has no 'result' field: {response}")
+                    return response
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse JSON from response: {e}")
+                logger.error(f"Response: {response}")
+                raise Exception(f"Invalid JSON response from GitHub MCP tool {tool_name}")
                 
         except Exception as e:
             logger.error(f"Error calling GitHub MCP tool {tool_name}: {e}")
@@ -236,17 +311,17 @@ class MCPGitHubClient(GitHubClientBase):
             })
             
             # The content is returned as a base64-encoded string
-            if "content" in content and content.get("encoding") == "base64":
+            if isinstance(content, dict) and "content" in content and content.get("encoding") == "base64":
                 decoded = base64.b64decode(content["content"]).decode('utf-8')
                 logger.info(f"Successfully retrieved and decoded content for {path}")
                 return decoded
             
             # If it's not encoded or we're dealing with an unexpected response format
-            if "content" in content:
+            if isinstance(content, dict) and "content" in content:
                 logger.warning(f"Content not base64 encoded, returning as-is")
                 return content.get("content", "")
             
-            logger.error(f"Unexpected response format from get_file_contents")
+            logger.error(f"Unexpected response format from get_file_contents: {content}")
             return ""
             
         except Exception as e:
@@ -272,7 +347,7 @@ class MCPGitHubClient(GitHubClientBase):
                 "query": f"repo:{owner}/{repo}"
             })
             
-            if repo_info.get("total_count", 0) > 0:
+            if isinstance(repo_info, dict) and "total_count" in repo_info and repo_info.get("total_count", 0) > 0:
                 items = repo_info.get("items", [])
                 if items and len(items) > 0:
                     branch = items[0].get("default_branch")
@@ -409,7 +484,7 @@ class MCPGitHubClient(GitHubClientBase):
                 "query": f"repo:{owner}/{repo}"
             })
             
-            if repo_info.get("total_count", 0) > 0:
+            if isinstance(repo_info, dict) and "total_count" in repo_info and repo_info.get("total_count", 0) > 0:
                 items = repo_info.get("items", [])
                 if items and len(items) > 0:
                     repo_data = items[0]

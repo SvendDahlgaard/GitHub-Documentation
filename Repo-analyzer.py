@@ -14,7 +14,7 @@ from mcp_github_client import MCPGitHubClient
 from claude_analyzer import ClaudeAnalyzer
 from batch_claude_analyzer import BatchClaudeAnalyzer
 from section_analyzer import SectionAnalyzer, AnalysisMethod
-from mcp_section_analyzer import MCPSectionAnalyzer
+from advanced_section_analyzer import AdvancedSectionAnalyzer
 from repo_cache import RepoCache
 
 # Load environment variables from .env file
@@ -54,8 +54,7 @@ def analyze_repository(args):
     try:
         if args.client_type == "mcp":
             github_client = MCPGitHubClient(
-                use_cache=not args.no_cache,
-                claude_executable=args.claude_executable
+                use_cache=not args.no_cache
             )
             logger.info(f"Successfully initialized MCP GitHub client")
         else:
@@ -84,10 +83,10 @@ def analyze_repository(args):
         logger.error(f"Failed to initialize Claude analyzer: {e}")
         sys.exit(1)
         
-    # Initialize section analyzer - always use MCP section analyzer if available
+    # Initialize section analyzer - always use Advanced section analyzer if available
     if args.client_type == "mcp":
-        analyzer = MCPSectionAnalyzer(claude_analyzer, github_client, use_cache=not args.no_cache)
-        logger.info("Using enhanced MCP section analyzer")
+        analyzer = AdvancedSectionAnalyzer(claude_analyzer, github_client, use_cache=not args.no_cache)
+        logger.info("Using enhanced advanced section analyzer")
     else:
         analyzer = SectionAnalyzer(claude_analyzer)
         logger.info("Using standard section analyzer")
@@ -142,8 +141,8 @@ def analyze_repository(args):
         # Identify logical sections
         sections = None
         
-        # If using MCP section analyzer, we can use enhanced analysis with owner/repo information
-        if isinstance(analyzer, MCPSectionAnalyzer):
+        # If using Advanced section analyzer, we can use enhanced analysis with owner/repo information
+        if isinstance(analyzer, AdvancedSectionAnalyzer):
             logger.info("Using enhanced section analysis with repository context")
             sections = analyzer.analyze_repository(
                 repo_files, 
