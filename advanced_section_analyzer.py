@@ -6,17 +6,16 @@ import re
 import networkx as nx
 
 from section_analyzer import SectionAnalyzer, AnalysisMethod
-from mcp_github_client import MCPGitHubClient
 from repo_cache import RepoCache
 
 logger = logging.getLogger(__name__)
 
-class MCPSectionAnalyzer(SectionAnalyzer):
-    """Section analyzer with enhanced capabilities using MCP GitHub client."""
+class AdvancedSectionAnalyzer(SectionAnalyzer):
+    """Advanced section analyzer with enhanced capabilities using MCP GitHub client."""
     
     def __init__(self, claude_analyzer=None, mcp_client=None, use_cache=True):
         """
-        Initialize the MCP-enhanced section analyzer.
+        Initialize the advanced section analyzer.
         
         Args:
             claude_analyzer: The Claude analyzer for code analysis
@@ -24,7 +23,7 @@ class MCPSectionAnalyzer(SectionAnalyzer):
             use_cache: Whether to use caching for dependency information
         """
         super().__init__(claude_analyzer)
-        self.mcp_client = mcp_client or MCPGitHubClient()
+        self.mcp_client = mcp_client 
         self.use_cache = use_cache
         self.cache = RepoCache() if use_cache else None
         
@@ -144,20 +143,23 @@ class MCPSectionAnalyzer(SectionAnalyzer):
         
         # Enhance with code search-based dependencies
         try:
-            # Batch processing for better performance
-            batches = [list(repo_files.keys())[i:i+10] for i in range(0, len(repo_files), 10)]
-            
-            for batch_idx, batch in enumerate(batches):
-                logger.info(f"Processing dependency batch {batch_idx+1}/{len(batches)} ({len(batch)} files)")
+            if self.mcp_client and hasattr(self.mcp_client, 'search_references'):
+                # Batch processing for better performance
+                batches = [list(repo_files.keys())[i:i+10] for i in range(0, len(repo_files), 10)]
                 
-                for filepath in batch:
-                    # Search for references to this file
-                    references = self.mcp_client.search_references(owner, repo, filepath)
+                for batch_idx, batch in enumerate(batches):
+                    logger.info(f"Processing dependency batch {batch_idx+1}/{len(batches)} ({len(batch)} files)")
                     
-                    # Add reverse dependencies (files that reference this file)
-                    for ref_path in references:
-                        if ref_path in repo_files:
-                            dependencies[ref_path].add(filepath)
+                    for filepath in batch:
+                        # Search for references to this file
+                        references = self.mcp_client.search_references(owner, repo, filepath)
+                        
+                        # Add reverse dependencies (files that reference this file)
+                        for ref_path in references:
+                            if ref_path in repo_files:
+                                dependencies[ref_path].add(filepath)
+            else:
+                logger.warning("MCP client does not support search_references method, using basic dependencies only")
                 
         except Exception as e:
             logger.warning(f"Code search-based dependency enhancement failed: {e}")
@@ -210,7 +212,7 @@ class MCPSectionAnalyzer(SectionAnalyzer):
                             return sections
         
         # If we have owner and repo info, we can use enhanced dependency analysis
-        if owner and repo:
+        if owner and repo and self.mcp_client and hasattr(self.mcp_client, 'search_references'):
             if method == AnalysisMethod.DEPENDENCY:
                 logger.info(f"Using enhanced dependency analysis for {owner}/{repo}")
                 sections = self.enhanced_dependency_analysis(repo_files, owner, repo, max_section_size, branch)
@@ -267,7 +269,7 @@ class MCPSectionAnalyzer(SectionAnalyzer):
             structure_data["files"] = list(repo_files.keys())
             structure_data["section_method"] = method.name
             
-            if not "owner" in structure_data:
+            if "owner" not in structure_data:
                 structure_data["owner"] = owner
                 structure_data["repo"] = repo
                 structure_data["branch"] = branch
@@ -280,5 +282,3 @@ class MCPSectionAnalyzer(SectionAnalyzer):
             metadata["section_method"] = method.name
             metadata["sections"] = {name: len(files) for name, files in sections}
             self.cache.save_repo_metadata(owner, repo, metadata, branch)
-            
-        return sections
