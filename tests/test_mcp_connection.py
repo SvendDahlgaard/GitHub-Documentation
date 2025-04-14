@@ -21,9 +21,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Add parent directory to path if needed
-if os.path.dirname(os.path.abspath(__file__)) not in sys.path:
-    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+# Fix import paths - add parent directory to path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+    logger.info(f"Added parent directory to Python path: {parent_dir}")
 
 # Load environment variables
 load_dotenv()
@@ -143,7 +146,7 @@ def test_mcp_github_client():
                 logger.warning(f"× No search results found for '{search_query}'")
                 
         except Exception as e:
-            logger.error(f"× Error performing code search: {e}")
+            logger.error(f"Error performing code search: {e}")
             return False
         
         # Clean up (important to terminate the server process)
