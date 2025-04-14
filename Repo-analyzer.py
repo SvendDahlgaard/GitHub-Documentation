@@ -10,13 +10,10 @@ from dotenv import load_dotenv
 
 # Import modules
 from direct_github_client import DirectGitHubClient
-from mcp_github_client import MCPGitHubClient
-from claude_analyzer import ClaudeAnalyzer
 from ClaudeSummarizer import BatchClaudeAnalyzer
 from section_analyzer import SectionAnalyzer, AnalysisMethod
-from advanced_section_analyzer import AdvancedSectionAnalyzer
-from repo_cache import RepoCache
 from ClaudeSectionAnalyzer import LLMClusterAnalyzer
+from repo_cache import RepoCache
 
 # Load environment variables from .env file
 load_dotenv()
@@ -53,39 +50,23 @@ def analyze_repository(args):
     
     # Initialize GitHub client
     try:
-        if args.client_type == "mcp":
-            github_client = MCPGitHubClient(
-                use_cache=not args.no_cache
-            )
-            logger.info(f"Successfully initialized MCP GitHub client")
-        else:
-            github_client = DirectGitHubClient(use_cache=not args.no_cache)
-            logger.info(f"Successfully initialized Direct GitHub client")
+        github_client = DirectGitHubClient(use_cache=not args.no_cache)
+        logger.info(f"Successfully initialized GitHub client")
     except Exception as e:
         logger.error(f"Failed to initialize GitHub client: {e}")
         sys.exit(1)
     
-    # Initialize Claude analyzer
+    # Initialize Claude analyzer for batch processing
     try:
-        if args.analysis_method == "api":
-            claude_analyzer = ClaudeAnalyzer(method="api")
-            logger.info("Using Claude API for analysis")
-        elif args.analysis_method == "batch":
-            claude_analyzer = BatchClaudeAnalyzer(claude_model=args.claude_model, use_prompt_caching=not args.no_prompt_cache)
-            logger.info(f"Using Claude Batch API for analysis with model: {args.claude_model}")
-            logger.info(f"Prompt caching: {'enabled' if not args.no_prompt_cache else 'disabled'}")
-        else:
-            claude_analyzer = ClaudeAnalyzer(
-                method="cli", 
-                claude_executable=args.claude_executable
-            )
-            logger.info(f"Using Claude CLI for analysis: {args.claude_executable}")
+        claude_analyzer = BatchClaudeAnalyzer(claude_model=args.claude_model, use_prompt_caching=not args.no_prompt_cache)
+        logger.info(f"Using Claude Batch API for analysis with model: {args.claude_model}")
+        logger.info(f"Prompt caching: {'enabled' if not args.no_prompt_cache else 'disabled'}")
     except Exception as e:
         logger.error(f"Failed to initialize Claude analyzer: {e}")
         sys.exit(1)
         
-    # Initialize section analyzer - always use Advanced section analyzer if available
-    if args.section_method == "llm_cluster" and args.analysis_method == "batch":
+    # Initialize section analyzer
+    if args.section_method == "llm_cluster":
         analyzer = LLMClusterAnalyzer(claude_analyzer, use_cache=not args.no_cache)
         logger.info("Using LLM-based cluster analyzer")
     else:
@@ -140,28 +121,12 @@ def analyze_repository(args):
                 logger.warning(f"Could not retrieve repository metadata: {e}")
         
         # Identify logical sections
-        sections = None
-        
-        # If using Advanced section analyzer, we can use enhanced analysis with owner/repo information
-        if isinstance(analyzer, AdvancedSectionAnalyzer):
-            logger.info("Using enhanced section analysis with repository context")
-            sections = analyzer.analyze_repository(
-                repo_files, 
-                method=section_method,
-                max_section_size=args.max_section_size,
-                min_section_size=args.min_section_size,
-                owner=args.owner,
-                repo=args.repo,
-                branch=args.branch
-            )
-        else:
-            # Use standard analysis
-            sections = analyzer.analyze_repository(
-                repo_files, 
-                method=section_method,
-                max_section_size=args.max_section_size,
-                min_section_size=args.min_section_size
-            )
+        sections = analyzer.analyze_repository(
+            repo_files, 
+            method=section_method,
+            max_section_size=args.max_section_size,
+            min_section_size=args.min_section_size
+        )
         
         logger.info(f"Identified {len(sections)} logical sections")
         
@@ -170,12 +135,8 @@ def analyze_repository(args):
         with open(os.path.join(args.output_dir, "sections.json"), "w") as f:
             json.dump(section_map, f, indent=2)
         
-        # Special handling for batch analysis
-        if args.analysis_method == "batch":
-            analyses = analyze_sections_batch(sections, args.query, args.use_context, claude_analyzer, args.output_dir)
-        else:
-            # Analyze each section sequentially, maintaining context between sections
-            analyses = analyze_sections_sequential(sections, args.query, args.use_context, analyzer, args.output_dir)
+        # Analyze each section in batch
+        analyses = analyze_sections_batch(sections, args.query, args.use_context, claude_analyzer, args.output_dir)
         
         # Create the index file
         index = analyzer.create_section_index(sections, analyses)
@@ -190,42 +151,6 @@ def analyze_repository(args):
         import traceback
         traceback.print_exc()
         sys.exit(1)
-
-def analyze_sections_sequential(sections, query, use_context, analyzer, output_dir):
-    """Analyze sections sequentially with context preservation between sections."""
-    analyses = {}
-    context = ""
-    
-    for i, (section_name, section_files) in enumerate(sections):
-        logger.info(f"Analyzing section {i+1}/{len(sections)}: {section_name} ({len(section_files)} files)")
-        
-        # Analyze current section with context from previous sections
-        analysis = analyzer.analyze_section(
-            section_name, 
-            section_files, 
-            query, 
-            context if use_context else None
-        )
-        
-        analyses[section_name] = analysis
-        
-        # Save individual section analysis
-        section_filename = section_name.replace('/', '_').replace('\\', '_')
-        with open(os.path.join(output_dir, f"{section_filename}.md"), "w") as f:
-            f.write(f"# {section_name}\n\n")
-            f.write(analysis)
-        
-        # Update context for next section (truncated to avoid too much context)
-        if use_context:
-            # Extract key points for context
-            key_points = _extract_key_points(analysis)
-            context += f"\n\nSection '{section_name}':\n{key_points}\n"
-            # Keep context from getting too large
-            context = context[-10000:] if len(context) > 10000 else context
-        
-        logger.info(f"Completed analysis of section: {section_name}")
-    
-    return analyses
 
 def analyze_sections_batch(sections, query, use_context, batch_analyzer, output_dir):
     """Analyze all sections in a batch for efficiency."""
@@ -300,17 +225,11 @@ def main():
     parser.add_argument("--owner", required=True, help="GitHub repository owner")
     parser.add_argument("--repo", required=True, help="GitHub repository name")
     parser.add_argument("--branch", help="Branch to analyze (default: repository's default branch)")
-    parser.add_argument("--claude-executable", default="claude", 
-                       help="Path to Claude executable (for CLI method)")
-    parser.add_argument("--analysis-method", choices=["api", "cli", "batch"], default="cli",
-                       help="Method to use for Claude analysis: API, CLI, or batch (default: cli)")
     parser.add_argument("--claude-model", default="claude-3-5-haiku-20241022",
                       help="Claude model to use (default: claude-3-5-haiku-20241022 for cost efficiency)")
-    parser.add_argument("--client-type", choices=["direct", "mcp"], default="mcp",
-                       help="Type of GitHub client to use: direct or MCP (default: mcp)")
-    parser.add_argument("--section-method", choices=["structural", "dependency", "hybrid", 'llm'], 
-                       default="dependency",
-                       help="Method to use for sectioning the repository (default: dependency)")
+    parser.add_argument("--section-method", choices=["structural", "dependency", "hybrid", 'llm_cluster'], 
+                       default="llm_cluster",
+                       help="Method to use for sectioning the repository (default: llm_cluster)")
     parser.add_argument("--max-section-size", type=int, default=15,
                         help="Maximum number of files in a section before subdivision (default: 15)")
     parser.add_argument("--min-section-size", type=int, default=2,
@@ -331,7 +250,7 @@ def main():
     parser.add_argument("--no-cache", action="store_true",
                         help="Disable caching of repository files")
     parser.add_argument("--no-prompt-cache", action="store_true",
-                        help="Disable prompt caching for batch API (only applies with --analysis-method=batch)")
+                        help="Disable prompt caching for batch API")
     parser.add_argument("--force-refresh", action="store_true",
                         help="Force refresh of repository data from GitHub, bypassing cache")
     parser.add_argument("--batch-size", type=int, default=20,
