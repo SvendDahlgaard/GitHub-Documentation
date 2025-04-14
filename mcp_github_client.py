@@ -31,6 +31,12 @@ class MCPGitHubClient(GitHubClientBase):
         if not self.github_token:
             logger.warning("No GITHUB_TOKEN environment variable found. GitHub MCP may not authenticate properly.")
         
+        # Use full path to npx or find it in the PATH
+        self.npx_path = self._find_npx_path()
+        if not self.npx_path:
+            logger.warning("Could not find npx in PATH. Using default 'npx' command.")
+            self.npx_path = "npx"
+            
         # Verify MCP GitHub server is available
         self._check_mcp_github_server()
         
@@ -40,11 +46,44 @@ class MCPGitHubClient(GitHubClientBase):
         # Counter for request IDs
         self.request_id = 0
     
+    def _find_npx_path(self):
+        """Find the full path to npx executable."""
+        # First check common installation locations
+        common_paths = [
+            os.path.join("C:", os.sep, "Program Files", "nodejs", "npx.cmd"),
+            os.path.join("C:", os.sep, "Program Files (x86)", "nodejs", "npx.cmd"),
+            os.path.join(os.path.expanduser("~"), "AppData", "Roaming", "npm", "npx.cmd")
+        ]
+        
+        for path in common_paths:
+            if os.path.exists(path):
+                logger.info(f"Found npx at: {path}")
+                return path
+                
+        # Try to find it in PATH
+        try:
+            # On Windows we need shell=True to resolve PATH properly
+            result = subprocess.run(
+                ["where", "npx"], 
+                capture_output=True, 
+                text=True, 
+                shell=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                npx_path = result.stdout.strip().split('\n')[0]
+                logger.info(f"Found npx in PATH: {npx_path}")
+                return npx_path
+        except Exception as e:
+            logger.warning(f"Error finding npx in PATH: {e}")
+            
+        return None
+    
     def _check_mcp_github_server(self):
         """Verify the MCP GitHub server is installed."""
         try:
             result = subprocess.run(
-                ["npx", "-y", "@modelcontextprotocol/server-github", "--version"],
+                [self.npx_path, "-y", "@modelcontextprotocol/server-github", "--version"],
                 capture_output=True,
                 text=True,
                 timeout=10
@@ -57,7 +96,7 @@ class MCPGitHubClient(GitHubClientBase):
                 logger.warning(f"MCP GitHub server stderr: {result.stderr}")
                 
         except FileNotFoundError:
-            logger.error("NPX command not found. Please install Node.js and npm.")
+            logger.error(f"NPX command not found at {self.npx_path}. Please install Node.js and npm.")
             logger.info("Install with: npm install -g @modelcontextprotocol/server-github")
         except Exception as e:
             logger.warning(f"Error checking MCP GitHub server: {e}")
@@ -66,7 +105,7 @@ class MCPGitHubClient(GitHubClientBase):
         """Start the MCP GitHub server as a subprocess."""
         try:
             # Create command to start the server
-            cmd = ["npx", "-y", "@modelcontextprotocol/server-github"]
+            cmd = [self.npx_path, "-y", "@modelcontextprotocol/server-github"]
             
             # Add logging
             logger.info(f"Starting MCP GitHub server with command: {' '.join(cmd)}")
