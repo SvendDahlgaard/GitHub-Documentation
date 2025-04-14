@@ -9,7 +9,7 @@ import re
 from dotenv import load_dotenv
 
 # Import modules
-from direct_github_client import DirectGitHubClient
+from GithubClient import GithubClient
 from ClaudeSummarizer import BatchClaudeAnalyzer
 from section_analyzer import SectionAnalyzer, AnalysisMethod
 from ClaudeSectionAnalyzer import LLMClusterAnalyzer
@@ -50,7 +50,7 @@ def analyze_repository(args):
     
     # Initialize GitHub client
     try:
-        github_client = DirectGitHubClient(use_cache=not args.no_cache)
+        github_client = GithubClient(use_cache=not args.no_cache)
         logger.info(f"Successfully initialized GitHub client")
     except Exception as e:
         logger.error(f"Failed to initialize GitHub client: {e}")
@@ -160,6 +160,13 @@ def analyze_sections_batch(sections, query, use_context, batch_analyzer, output_
         # Simple case: analyze all sections in one batch without context
         logger.info(f"Analyzing all {len(sections)} sections in a single batch")
         analyses = batch_analyzer.analyze_sections_batch(sections, query)
+        
+        # Save individual section analyses
+        for section_name, analysis in analyses.items():
+            section_filename = section_name.replace('/', '_').replace('\\', '_')
+            with open(os.path.join(output_dir, f"{section_filename}.md"), "w") as f:
+                f.write(f"# {section_name}\n\n")
+                f.write(analysis)
     else:
         # More complex case: analyze in chunks to maintain context between groups
         # Group sections into chunks of 5-10 for efficient batching while maintaining context flow
