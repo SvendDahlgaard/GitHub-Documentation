@@ -11,8 +11,8 @@ from dotenv import load_dotenv
 # Import modules
 from GithubClient import GithubClient
 from ClaudeSummarizer import BatchClaudeAnalyzer
-from section_analyzer import SectionAnalyzer, AnalysisMethod
-from ClaudeSectionAnalyzer import LLMClusterAnalyzer
+from BasicSectionAnalyzer import BasicSectionAnalyzer, AnalysisMethod
+from LLMClusterAnalyzer import LLMClusterAnalyzer
 from repo_cache import RepoCache
 
 # Load environment variables from .env file
@@ -70,8 +70,8 @@ def analyze_repository(args):
         analyzer = LLMClusterAnalyzer(claude_analyzer, use_cache=not args.no_cache)
         logger.info("Using LLM-based cluster analyzer")
     else:
-        analyzer = SectionAnalyzer(claude_analyzer)
-        logger.info("Using standard section analyzer")
+        analyzer = BasicSectionAnalyzer(claude_analyzer, use_cache=not args.no_cache)
+        logger.info("Using basic section analyzer")
     
     # Create output directory if it doesn't exist
     os.makedirs(args.output_dir, exist_ok=True)
@@ -106,9 +106,11 @@ def analyze_repository(args):
             
         logger.info(f"Found {len(repo_files)} files to analyze")
         
-        # Determine the section analysis method
-        section_method = get_analysis_method(args.section_method)
-        logger.info(f"Using {section_method.name} analysis method for sections")
+        # Determine the section analysis method if using BasicSectionAnalyzer
+        section_method = None
+        if not isinstance(analyzer, LLMClusterAnalyzer) and args.section_method != "llm_cluster":
+            section_method = get_analysis_method(args.section_method)
+            logger.info(f"Using {section_method.name} analysis method for basic section analyzer")
         
         # Try to get repository metadata 
         if cache and not args.no_cache:
