@@ -7,6 +7,7 @@
 - **MCP GitHub Client**: Removed MCP-based GitHub client and all related code
 - **Claude CLI Integration**: Removed support for using the Claude CLI
 - **Multiple Client Options**: Simplified to only use the direct GitHub API client
+- **Advanced Section Analyzer**: Removed advanced_section_analyzer.py as it was designed for MCP integration
 
 ### Changed
 
