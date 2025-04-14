@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 class MCPGitHubClient(GitHubClientBase):
     """Client that uses GitHub MCP server to interact with repositories directly."""
     
-    def __init__(self, use_cache=True, timeout=240):
+    def __init__(self, use_cache=True, timeout=30):
         """
         Initialize client with direct GitHub MCP server integration.
         
@@ -36,9 +36,10 @@ class MCPGitHubClient(GitHubClientBase):
         if not self.npx_path:
             logger.warning("Could not find npx in PATH. Using default 'npx' command.")
             self.npx_path = "npx"
-            
-        # Verify MCP GitHub server is available
-        self._check_mcp_github_server()
+        
+        # We'll skip checking the MCP GitHub server with --version as that can hang
+        # and just assume it's either installed or we'll install it on demand
+        logger.info("Skipping MCP GitHub server version check to avoid potential hanging")
         
         # Start the server process
         self._start_mcp_server()
@@ -60,66 +61,88 @@ class MCPGitHubClient(GitHubClientBase):
                 logger.info(f"Found npx at: {path}")
                 return path
                 
-        # Try to find it in PATH
+        # Try to find it in PATH using a simple file check rather than running a process
         try:
-            # On Windows we need shell=True to resolve PATH properly
-            result = subprocess.run(
-                ["where", "npx"], 
-                capture_output=True, 
-                text=True, 
-                shell=True,
-                timeout=5
-            )
-            if result.returncode == 0:
-                npx_path = result.stdout.strip().split('\n')[0]
-                logger.info(f"Found npx in PATH: {npx_path}")
-                return npx_path
+            # On Windows, search in common PATH directories
+            path_dirs = os.environ.get("PATH", "").split(os.pathsep)
+            for dir_path in path_dirs:
+                npx_path = os.path.join(dir_path, "npx.cmd")
+                if os.path.exists(npx_path):
+                    logger.info(f"Found npx in PATH: {npx_path}")
+                    return npx_path
         except Exception as e:
             logger.warning(f"Error finding npx in PATH: {e}")
             
         return None
     
-    def _check_mcp_github_server(self):
-        """Verify the MCP GitHub server is installed."""
-        try:
-            result = subprocess.run(
-                [self.npx_path, "-y", "@modelcontextprotocol/server-github", "--version"],
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
-            
-            if result.returncode == 0:
-                logger.info(f"MCP GitHub server is available: {result.stdout.strip()}")
-            else:
-                logger.warning(f"MCP GitHub server check returned non-zero exit code: {result.returncode}")
-                logger.warning(f"MCP GitHub server stderr: {result.stderr}")
-                
-        except FileNotFoundError:
-            logger.error(f"NPX command not found at {self.npx_path}. Please install Node.js and npm.")
-            logger.info("Install with: npm install -g @modelcontextprotocol/server-github")
-        except Exception as e:
-            logger.warning(f"Error checking MCP GitHub server: {e}")
-    
     def _start_mcp_server(self):
         """Start the MCP GitHub server as a subprocess."""
         try:
             # Create command to start the server
-            cmd = [self.npx_path, "-y", "@modelcontextprotocol/server-github"]
+            # For increased reliability on Windows, use a more direct command
+            # that avoids potential "first-time install" prompts
+            cmd = [self.npx_path, "--yes", "@modelcontextprotocol/server-github"]
             
             # Add logging
             logger.info(f"Starting MCP GitHub server with command: {' '.join(cmd)}")
             
-            # Start the server process
-            self.server_process = subprocess.Popen(
-                cmd,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                bufsize=1,  # Line buffered
-                env={**os.environ, "GITHUB_PERSONAL_ACCESS_TOKEN": self.github_token}
+            # Create environment with GITHUB token
+            env = os.environ.copy()
+            if self.github_token:
+                env["GITHUB_PERSONAL_ACCESS_TOKEN"] = self.github_token
+            
+            # Check if the package is already installed to avoid hanging
+            npm_list_cmd = ["npm", "list", "-g", "@modelcontextprotocol/server-github"]
+            try:
+                npm_result = subprocess.run(
+                    npm_list_cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                if "@modelcontextprotocol/server-github" in npm_result.stdout:
+                    logger.info("MCP GitHub server already installed globally")
+                else:
+                    logger.info("MCP GitHub server not found globally, will be installed on demand")
+            except Exception as e:
+                logger.warning(f"Could not check if MCP GitHub server is installed: {e}")
+            
+            # Start the server process with a timeout
+            # Setting up a non-blocking way to start the process
+            logger.info("Starting server process with timeout protection...")
+            
+            def start_process():
+                try:
+                    return subprocess.Popen(
+                        cmd,
+                        stdin=subprocess.PIPE,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        bufsize=1,  # Line buffered
+                        env=env
+                    )
+                except Exception as e:
+                    logger.error(f"Error in start_process: {e}")
+                    return None
+            
+            # Use a thread with a timeout
+            process_queue = Queue()
+            process_thread = threading.Thread(
+                target=lambda: process_queue.put(start_process())
             )
+            process_thread.daemon = True
+            process_thread.start()
+            
+            # Wait for the process to start or timeout
+            try:
+                self.server_process = process_queue.get(timeout=10)
+                if not self.server_process:
+                    raise Exception("Failed to start server process")
+            except Empty:
+                logger.error("Timeout starting MCP GitHub server")
+                # Abandon the thread (it will be cleaned up when the program exits)
+                raise Exception("Timeout starting MCP GitHub server")
             
             # Set up queues for responses and errors
             self.response_queue = Queue()
@@ -140,10 +163,10 @@ class MCPGitHubClient(GitHubClientBase):
             self.stdout_thread.start()
             self.stderr_thread.start()
             
-            # Wait for server to initialize (give it a moment)
-            time.sleep(1)
+            # Wait briefly for server to initialize but don't block too long
+            time.sleep(2)
             
-            logger.info("Started MCP GitHub server successfully")
+            logger.info("MCP GitHub server process started")
             
         except Exception as e:
             logger.error(f"Failed to start MCP GitHub server: {e}")
@@ -212,10 +235,19 @@ class MCPGitHubClient(GitHubClientBase):
             logger.info(f"Calling MCP tool '{tool_name}' with request ID {request_id}")
             logger.debug(f"Request parameters: {json.dumps(params, indent=2)}")
             
+            # Make sure server process is still running
+            if not hasattr(self, 'server_process') or self.server_process.poll() is not None:
+                logger.error("Server process is not running, cannot make request")
+                raise Exception("MCP GitHub server is not running")
+            
             # Convert request to JSON and send to the server
             request_json = json.dumps(request) + '\n'
-            self.server_process.stdin.write(request_json)
-            self.server_process.stdin.flush()
+            try:
+                self.server_process.stdin.write(request_json)
+                self.server_process.stdin.flush()
+            except Exception as e:
+                logger.error(f"Error sending request to server: {e}")
+                raise Exception(f"Could not send request to MCP GitHub server: {e}")
             
             # Wait for response with timeout
             start_time = time.time()
@@ -244,6 +276,12 @@ class MCPGitHubClient(GitHubClientBase):
                 except Empty:
                     # No response yet, continue waiting
                     pass
+                
+                # Check if server is still running
+                if self.server_process.poll() is not None:
+                    exit_code = self.server_process.poll()
+                    logger.error(f"Server process exited with code {exit_code} while waiting for response")
+                    raise Exception(f"MCP GitHub server exited with code {exit_code}")
             
             if response is None:
                 raise Exception(f"Timeout calling MCP tool {tool_name} after {timeout} seconds")
@@ -428,7 +466,7 @@ class MCPGitHubClient(GitHubClientBase):
             response = self.call_mcp_tool("search_code", {
                 "q": query,
                 "per_page": min(100, max_results)
-            }, custom_timeout=120)
+            }, custom_timeout=60)
             
             items = response.get("items", [])
             total_count = response.get("total_count", 0)
