@@ -12,10 +12,11 @@ from dotenv import load_dotenv
 from direct_github_client import DirectGitHubClient
 from mcp_github_client import MCPGitHubClient
 from claude_analyzer import ClaudeAnalyzer
-from batch_claude_analyzer import BatchClaudeAnalyzer
+from ClaudeSummarizer import BatchClaudeAnalyzer
 from section_analyzer import SectionAnalyzer, AnalysisMethod
 from advanced_section_analyzer import AdvancedSectionAnalyzer
 from repo_cache import RepoCache
+from ClaudeSectionAnalyzer import LLMClusterAnalyzer
 
 # Load environment variables from .env file
 load_dotenv()
@@ -84,9 +85,9 @@ def analyze_repository(args):
         sys.exit(1)
         
     # Initialize section analyzer - always use Advanced section analyzer if available
-    if args.client_type == "mcp":
-        analyzer = AdvancedSectionAnalyzer(claude_analyzer, github_client, use_cache=not args.no_cache)
-        logger.info("Using enhanced advanced section analyzer")
+    if args.section_method == "llm_cluster" and args.analysis_method == "batch":
+        analyzer = LLMClusterAnalyzer(claude_analyzer, use_cache=not args.no_cache)
+        logger.info("Using LLM-based cluster analyzer")
     else:
         analyzer = SectionAnalyzer(claude_analyzer)
         logger.info("Using standard section analyzer")

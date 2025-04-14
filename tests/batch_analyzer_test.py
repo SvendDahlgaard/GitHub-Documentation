@@ -7,7 +7,7 @@ import sys
 import json
 from dotenv import load_dotenv
 sys.path.append('..')  # Add parent directory to path
-from batch_claude_analyzer import BatchClaudeAnalyzer
+from ClaudeSummarizer import BatchClaudeAnalyzer
 
 def test_batch_analyzer():
     """Test BatchClaudeAnalyzer's ability to process multiple code sections efficiently."""
