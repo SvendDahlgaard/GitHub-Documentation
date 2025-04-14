@@ -12,6 +12,11 @@ from github_client_base import GitHubClientBase
 
 logger = logging.getLogger(__name__)
 
+# Define full paths to Node.js executables for Windows
+NODE_PATH = os.path.join("C:", os.sep, "Program Files", "nodejs", "node.exe")
+NPM_PATH = os.path.join("C:", os.sep, "Program Files", "nodejs", "npm.cmd")
+NPX_PATH = os.path.join("C:", os.sep, "Program Files", "nodejs", "npx.cmd")
+
 class MCPGitHubClient(GitHubClientBase):
     """Client that uses GitHub MCP server to interact with repositories directly."""
     
@@ -31,12 +36,6 @@ class MCPGitHubClient(GitHubClientBase):
         if not self.github_token:
             logger.warning("No GITHUB_TOKEN environment variable found. GitHub MCP may not authenticate properly.")
         
-        # Use full path to npx or find it in the PATH
-        self.npx_path = self._find_npx_path()
-        if not self.npx_path:
-            logger.warning("Could not find npx in PATH. Using default 'npx' command.")
-            self.npx_path = "npx"
-        
         # We'll skip checking the MCP GitHub server with --version as that can hang
         # and just assume it's either installed or we'll install it on demand
         logger.info("Skipping MCP GitHub server version check to avoid potential hanging")
@@ -47,41 +46,14 @@ class MCPGitHubClient(GitHubClientBase):
         # Counter for request IDs
         self.request_id = 0
     
-    def _find_npx_path(self):
-        """Find the full path to npx executable."""
-        # First check common installation locations
-        common_paths = [
-            os.path.join("C:", os.sep, "Program Files", "nodejs", "npx.cmd"),
-            os.path.join("C:", os.sep, "Program Files (x86)", "nodejs", "npx.cmd"),
-            os.path.join(os.path.expanduser("~"), "AppData", "Roaming", "npm", "npx.cmd")
-        ]
-        
-        for path in common_paths:
-            if os.path.exists(path):
-                logger.info(f"Found npx at: {path}")
-                return path
-                
-        # Try to find it in PATH using a simple file check rather than running a process
-        try:
-            # On Windows, search in common PATH directories
-            path_dirs = os.environ.get("PATH", "").split(os.pathsep)
-            for dir_path in path_dirs:
-                npx_path = os.path.join(dir_path, "npx.cmd")
-                if os.path.exists(npx_path):
-                    logger.info(f"Found npx in PATH: {npx_path}")
-                    return npx_path
-        except Exception as e:
-            logger.warning(f"Error finding npx in PATH: {e}")
-            
-        return None
-    
     def _start_mcp_server(self):
         """Start the MCP GitHub server as a subprocess."""
         try:
+            # Use the full path to npx for Windows
+            npx_command = NPX_PATH if os.path.exists(NPX_PATH) else "npx"
+            
             # Create command to start the server
-            # For increased reliability on Windows, use a more direct command
-            # that avoids potential "first-time install" prompts
-            cmd = [self.npx_path, "--yes", "@modelcontextprotocol/server-github"]
+            cmd = [npx_command, "--yes", "@modelcontextprotocol/server-github"]
             
             # Add logging
             logger.info(f"Starting MCP GitHub server with command: {' '.join(cmd)}")
@@ -90,22 +62,6 @@ class MCPGitHubClient(GitHubClientBase):
             env = os.environ.copy()
             if self.github_token:
                 env["GITHUB_PERSONAL_ACCESS_TOKEN"] = self.github_token
-            
-            # Check if the package is already installed to avoid hanging
-            npm_list_cmd = ["npm", "list", "-g", "@modelcontextprotocol/server-github"]
-            try:
-                npm_result = subprocess.run(
-                    npm_list_cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=5,
-                )
-                if "@modelcontextprotocol/server-github" in npm_result.stdout:
-                    logger.info("MCP GitHub server already installed globally")
-                else:
-                    logger.info("MCP GitHub server not found globally, will be installed on demand")
-            except Exception as e:
-                logger.warning(f"Could not check if MCP GitHub server is installed: {e}")
             
             # Start the server process with a timeout
             # Setting up a non-blocking way to start the process
