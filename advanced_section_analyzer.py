@@ -282,3 +282,5 @@ class AdvancedSectionAnalyzer(SectionAnalyzer):
             metadata["section_method"] = method.name
             metadata["sections"] = {name: len(files) for name, files in sections}
             self.cache.save_repo_metadata(owner, repo, metadata, branch)
+        
+        return sections
