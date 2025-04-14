@@ -308,7 +308,7 @@ def main():
                       help="Claude model to use (default: claude-3-5-haiku-20241022 for cost efficiency)")
     parser.add_argument("--client-type", choices=["direct", "mcp"], default="mcp",
                        help="Type of GitHub client to use: direct or MCP (default: mcp)")
-    parser.add_argument("--section-method", choices=["structural", "dependency", "hybrid"], 
+    parser.add_argument("--section-method", choices=["structural", "dependency", "hybrid", 'llm'], 
                        default="dependency",
                        help="Method to use for sectioning the repository (default: dependency)")
     parser.add_argument("--max-section-size", type=int, default=15,

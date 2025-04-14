@@ -22,6 +22,7 @@ analysis/
 
 # Ignore test output
 tests/test_output
+test_output/
 
 #Ignore cache
 cache/
