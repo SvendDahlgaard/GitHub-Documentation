@@ -11,27 +11,25 @@ from repo_cache import RepoCache
 logger = logging.getLogger(__name__)
 
 class AdvancedSectionAnalyzer(SectionAnalyzer):
-    """Advanced section analyzer with enhanced capabilities using MCP GitHub client."""
+    """Advanced section analyzer with enhanced capabilities."""
     
-    def __init__(self, claude_analyzer=None, mcp_client=None, use_cache=True):
+    def __init__(self, claude_analyzer=None, use_cache=True):
         """
         Initialize the advanced section analyzer.
         
         Args:
             claude_analyzer: The Claude analyzer for code analysis
-            mcp_client: The MCP GitHub client for repository interactions
             use_cache: Whether to use caching for dependency information
         """
         super().__init__(claude_analyzer)
-        self.mcp_client = mcp_client 
         self.use_cache = use_cache
         self.cache = RepoCache() if use_cache else None
         
-    def enhanced_dependency_analysis(self, repo_files: Dict[str, str], owner: str, repo: str, 
+    def advanced_dependency_analysis(self, repo_files: Dict[str, str], owner: str, repo: str, 
                                   max_section_size: int = 15,
                                   branch: str = None) -> List[Tuple[str, Dict[str, str]]]:
         """
-        Analyze repository using enhanced dependency detection via code search.
+        Analyze repository using advanced dependency detection.
         
         Args:
             repo_files: Dictionary mapping file paths to contents
@@ -43,7 +41,7 @@ class AdvancedSectionAnalyzer(SectionAnalyzer):
         Returns:
             List of tuples (section_name, {file_path: content})
         """
-        logger.info("Performing enhanced dependency analysis with code search")
+        logger.info("Performing advanced dependency analysis")
         
         # Check if we have cached dependencies
         dependencies = None
@@ -59,8 +57,8 @@ class AdvancedSectionAnalyzer(SectionAnalyzer):
         
         # If no cached dependencies, extract them
         if not dependencies:
-            # Build dependency graph using code search
-            dependencies = self._extract_enhanced_dependencies(repo_files, owner, repo)
+            # Build dependency graph using normal extraction
+            dependencies = self._extract_dependencies(repo_files)
             
             # Cache the dependencies if cache is enabled
             if self.use_cache:
@@ -125,66 +123,25 @@ class AdvancedSectionAnalyzer(SectionAnalyzer):
                 final_sections.append((section_name, files))
         
         return sorted(final_sections, key=lambda x: x[0])
-        
-    def _extract_enhanced_dependencies(self, repo_files: Dict[str, str], owner: str, repo: str) -> Dict[str, Set[str]]:
-        """
-        Extract enhanced dependencies between files using code search.
-        
-        Args:
-            repo_files: Dictionary of file paths to contents
-            owner: Repository owner
-            repo: Repository name
-            
-        Returns:
-            Dictionary mapping file paths to sets of imported/referenced file paths
-        """
-        # Start with basic dependencies
-        dependencies = self._extract_dependencies(repo_files)
-        
-        # Enhance with code search-based dependencies
-        try:
-            if self.mcp_client and hasattr(self.mcp_client, 'search_references'):
-                # Batch processing for better performance
-                batches = [list(repo_files.keys())[i:i+10] for i in range(0, len(repo_files), 10)]
-                
-                for batch_idx, batch in enumerate(batches):
-                    logger.info(f"Processing dependency batch {batch_idx+1}/{len(batches)} ({len(batch)} files)")
-                    
-                    for filepath in batch:
-                        # Search for references to this file
-                        references = self.mcp_client.search_references(owner, repo, filepath)
-                        
-                        # Add reverse dependencies (files that reference this file)
-                        for ref_path in references:
-                            if ref_path in repo_files:
-                                dependencies[ref_path].add(filepath)
-            else:
-                logger.warning("MCP client does not support search_references method, using basic dependencies only")
-                
-        except Exception as e:
-            logger.warning(f"Code search-based dependency enhancement failed: {e}")
-            logger.warning("Falling back to basic dependency extraction")
-        
-        return dependencies
     
     def analyze_repository(self, repo_files: Dict[str, str], 
-                         method: AnalysisMethod = AnalysisMethod.DEPENDENCY,  # Default to enhanced dependency analysis
+                         method: AnalysisMethod = AnalysisMethod.DEPENDENCY,
                          max_section_size: int = 15,
                          min_section_size: int = 2,
                          owner: str = None,
                          repo: str = None,
                          branch: str = None) -> List[Tuple[str, Dict[str, str]]]:
         """
-        Analyze repository using the specified method with MCP enhancements when possible.
+        Analyze repository using the specified method.
         
         Args:
             repo_files: Dictionary mapping file paths to contents
-            method: Analysis method to use (default: DEPENDENCY for enhanced analysis)
+            method: Analysis method to use
             max_section_size: Maximum number of files in a section before subdivision
             min_section_size: Minimum number of files in a section (smaller sections will be merged)
-            owner: Repository owner (required for enhanced analysis)
-            repo: Repository name (required for enhanced analysis)
-            branch: Repository branch
+            owner: Repository owner (optional, used for caching)
+            repo: Repository name (optional, used for caching)
+            branch: Repository branch (optional, used for caching)
             
         Returns:
             List of tuples (section_name, {file_path: content})
@@ -211,46 +168,8 @@ class AdvancedSectionAnalyzer(SectionAnalyzer):
                             logger.info(f"Using {len(sections)} cached sections from repository structure")
                             return sections
         
-        # If we have owner and repo info, we can use enhanced dependency analysis
-        if owner and repo and self.mcp_client and hasattr(self.mcp_client, 'search_references'):
-            if method == AnalysisMethod.DEPENDENCY:
-                logger.info(f"Using enhanced dependency analysis for {owner}/{repo}")
-                sections = self.enhanced_dependency_analysis(repo_files, owner, repo, max_section_size, branch)
-            elif method == AnalysisMethod.HYBRID:
-                # For hybrid, start with structural and refine with enhanced dependencies
-                logger.info(f"Using enhanced hybrid analysis for {owner}/{repo}")
-                structural_sections = super().analyze_repository(repo_files, AnalysisMethod.STRUCTURAL, max_section_size)
-                
-                # Extract dependencies
-                dependencies = self._extract_enhanced_dependencies(repo_files, owner, repo)
-                
-                # Refine large sections with dependency information
-                sections = []
-                for section_name, files in structural_sections:
-                    if len(files) > max_section_size:
-                        # Create subgraph for just this section
-                        section_deps = {
-                            src: {tgt for tgt in deps if tgt in files}
-                            for src, deps in dependencies.items() if src in files
-                        }
-                        
-                        # Get dependency-based subsections
-                        subsections = self._group_by_dependencies(
-                            files, section_deps, max_section_size
-                        )
-                        
-                        # Rename subsections based on parent section
-                        for i, (subsection_name, subsection_files) in enumerate(subsections):
-                            new_name = f"{section_name}/{subsection_name}"
-                            sections.append((new_name, subsection_files))
-                    else:
-                        sections.append((section_name, files))
-            else:
-                # Fall back to standard structural analysis
-                sections = super().analyze_repository(repo_files, AnalysisMethod.STRUCTURAL, max_section_size)
-        else:
-            # Fall back to standard analysis methods
-            sections = super().analyze_repository(repo_files, method, max_section_size)
+        # Use standard analysis methods
+        sections = super().analyze_repository(repo_files, method, max_section_size)
         
         # Apply minimum section size if specified
         if min_section_size > 1:
