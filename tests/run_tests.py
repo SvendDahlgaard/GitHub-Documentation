@@ -4,11 +4,11 @@ Run all tests for the GitHub Documentation tool.
 """
 import os
 import sys
-from github_token_test import test_github_token
+from tests.GithubClientTest import test_github_token
 from section_analyzer_test import test_section_analyzer
 from claude_test import test_claude_analyzer
 from mcp_client_test import test_mcp_github_client
-from batch_analyzer_test import test_mock_batch
+from tests.ClaudeBatchProcesserTest import test_mock_batch
 
 def main():
     """Run all tests."""
