@@ -158,17 +158,27 @@ def analyze_sections_batch(sections, query, use_context, batch_analyzer, output_
     """Analyze all sections in a batch for efficiency."""
     analyses = {}
     
+def analyze_sections_batch(sections, query, use_context, batch_analyzer, output_dir):
+    """Analyze all sections in a batch for efficiency."""
+    analyses = {}
+    
     if not use_context:
         # Simple case: analyze all sections in one batch without context
         logger.info(f"Analyzing all {len(sections)} sections in a single batch")
-        analyses = batch_analyzer.analyze_sections_batch(sections, query)
         
-        # Save individual section analyses
-        for section_name, analysis in analyses.items():
-            section_filename = section_name.replace('/', '_').replace('\\', '_')
-            with open(os.path.join(output_dir, f"{section_filename}.md"), "w") as f:
-                f.write(f"# {section_name}\n\n")
-                f.write(analysis)
+        # Add debug statements
+        print("DEBUG: Type of batch_analyzer:", type(batch_analyzer))
+        print("DEBUG: Type of sections:", type(sections))
+        print("DEBUG: First section data:", sections[0] if sections else "No sections")
+        
+        try:
+            analyses = batch_analyzer.analyze_sections_batch(sections, query)
+            print("DEBUG: Successfully called analyze_sections_batch")
+        except Exception as e:
+            print(f"DEBUG: Exception in analyze_sections_batch: {type(e).__name__}: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            raise
     else:
         # More complex case: analyze in chunks to maintain context between groups
         # Group sections into chunks of 5-10 for efficient batching while maintaining context flow

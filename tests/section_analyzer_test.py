@@ -3,8 +3,8 @@ import sys
 import json
 from dotenv import load_dotenv
 sys.path.append('..')  # Add parent directory to path
-from direct_github_client import DirectGitHubClient
-from section_analyzer import SectionAnalyzer, AnalysisMethod
+from GithubClient import DirectGitHubClient
+from BasicSectionAnalyzer import SectionAnalyzer, AnalysisMethod
 
 # Global cache for repository files during tests
 _repo_files_cache = {}

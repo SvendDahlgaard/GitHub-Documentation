@@ -2,7 +2,7 @@ import os
 import json
 import time
 import logging
-import requests
+import requests as req  
 import re
 from typing import Dict, List, Any, Optional
 from datetime import datetime
@@ -53,7 +53,7 @@ class ClaudeAPIClient:
             "messages": [{"role": "user", "content": "Hello, this is a test."}]
         }
         
-        response = requests.post(
+        response = req.post(
             "https://api.anthropic.com/v1/messages",
             headers=self.headers,
             json=data,
@@ -86,7 +86,7 @@ class ClaudeAPIClient:
             if system_prompt:
                 data["system"] = system_prompt
             
-            response = requests.post(
+            response = req.post(
                 "https://api.anthropic.com/v1/messages",
                 headers=self.headers,
                 json=data,
@@ -104,7 +104,7 @@ class ClaudeAPIClient:
             logger.error(f"Error sending single request: {e}")
             return f"Error: {str(e)}"
 
-    def batch_request(self, requests: List[Dict]) -> Dict[str, Any]:
+    def batch_request(self, request_list: List[Dict]) -> Dict[str, Any]:
         """
         Send a batch of requests to the Anthropic API.
         
@@ -120,12 +120,13 @@ class ClaudeAPIClient:
         """
         try:
             # Create batch
-            logger.info(f"Creating batch with {len(requests)} requests")
+            logger.info(f"Creating batch with {len(request_list)} requests")
             
-            create_response = requests.post(
+            # Use the renamed module
+            create_response = req.post(  # Use req instead of requests
                 "https://api.anthropic.com/v1/messages/batches",
                 headers=self.headers,
-                json={"requests": requests},
+                json={"requests": request_list},  # Use the renamed parameter
                 timeout=30
             )
             
@@ -159,7 +160,7 @@ class ClaudeAPIClient:
         for i in range(max_polls):
             logger.info(f"Polling batch status ({i+1}/{max_polls})...")
             
-            status_response = requests.get(
+            status_response = req.get(
                 f"https://api.anthropic.com/v1/messages/batches/{batch_id}",
                 headers=self.headers,
                 timeout=30
@@ -202,7 +203,7 @@ class ClaudeAPIClient:
         """
         logger.info(f"Retrieving batch results from: {results_url}")
         
-        response = requests.get(results_url, headers=self.headers, timeout=60)
+        response = req.get(results_url, headers=self.headers, timeout=60)
         
         if response.status_code != 200:
             logger.error(f"Failed to retrieve batch results: {response.status_code} - {response.text}")
