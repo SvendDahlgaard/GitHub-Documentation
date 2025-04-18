@@ -31,7 +31,8 @@ class LLMClusterAnalyzer:
     def analyze_repository(self, repo_files: Dict[str, str], 
                           method=None,  # Not used but included for interface consistency
                           max_section_size: int = 15,
-                          min_section_size: int = 2) -> List[Tuple[str, Dict[str, str]]]:
+                          min_section_size: int = 2,
+                          auto_filter: bool = True) -> List[Tuple[str, Dict[str, str]]]:
         """
         Analyze repository using LLM-based clustering.
         
@@ -40,7 +41,8 @@ class LLMClusterAnalyzer:
             method: Not used, included for interface consistency with BasicSectionAnalyzer
             max_section_size: Maximum number of files in a section
             min_section_size: Minimum number of files in a section
-            
+            auto_filter: Whether to automatically filter less important files
+  
         Returns:
             List of tuples (section_name, {file_path: content})
         """
@@ -51,6 +53,11 @@ class LLMClusterAnalyzer:
         for path, content in repo_files.items():
             dir_name = os.path.dirname(path) or "root"
             dir_groups[dir_name][path] = content
+
+            # If auto_filter is enabled, filter less important files first
+        if auto_filter:
+            repo_files = self._filter_important_files(repo_files)
+            logger.info(f"Filtered to {len(repo_files)} important files for analysis")
         
         sections = []
         
@@ -218,6 +225,90 @@ Choose descriptive cluster names that reflect the purpose of the grouped files.
             logger.error(f"Error parsing clustering result: {e}")
             # Fallback to simple clustering
             return self._fallback_clustering(file_summaries, original_files, max_cluster_size)
+        
+    def _filter_important_files(self, repo_files: Dict[str, str]) -> Dict[str, str]:
+        """
+        Use Claude to determine which files are most important for documentation.
+        
+        Args:
+            repo_files: Dictionary mapping file paths to contents
+            
+        Returns:
+            Filtered dictionary of important files
+        """
+        # Prepare file metadata for all files
+        file_metadata = []
+        for path, content in repo_files.items():
+            extension = os.path.splitext(path)[1]
+            file_metadata.append({
+                "path": path,
+                "extension": extension,
+                "size": len(content),
+                "lines": content.count('\n') + 1,
+                "is_test": "test" in path.lower() or path.startswith("tests/"),
+                "preview": content[:300] + "..." if len(content) > 300 else content
+            })
+        
+        # Create batch of metadata for analysis
+        metadata_json = json.dumps(file_metadata)
+        
+        # Create a prompt for Claude to evaluate file importance
+        importance_prompt = f"""You are helping analyze a codebase for documentation purposes.
+    Below is metadata about files in the repository. Determine which files are most important
+    to include in documentation and which can be safely excluded.
+
+    Important files typically include:
+    - Core functionality and business logic
+    - Main interfaces and APIs
+    - Configuration and setup files
+    - Type definitions and data models
+
+    Less important files typically include:
+    - Auto-generated code
+    - Trivial configuration files (like .gitignore)
+    - Test fixtures and test output
+    - Duplicate or near-duplicate files
+    - Very small utility files with minimal content
+
+    File metadata:
+    {metadata_json}
+
+    Return a JSON array of paths for files that SHOULD be included in documentation.
+    Format: ["file1.py", "file2.js", ...]
+    """
+        
+        # Create a single section for the importance evaluation
+        importance_section = [("file_importance", {"importance_prompt.md": importance_prompt})]
+        
+        # Use the batch analyzer to get the evaluation
+        result = self.batch_analyzer.analyze_sections_batch(
+            importance_section, 
+            "Evaluate which files are most important for documentation."
+        )
+        
+        # Extract JSON response (with error handling)
+        try:
+            importance_response = result.get("file_importance", "")
+            # Extract JSON array from response
+            json_str = OptimizedPromptManager.extract_json(importance_response)
+            important_paths = json.loads(json_str)
+            
+            # Filter repo_files to only include important paths
+            important_files = {path: content for path, content in repo_files.items() 
+                            if path in important_paths}
+            
+            logger.info(f"Identified {len(important_files)} important files out of {len(repo_files)} total")
+            
+            # If too few files were selected, return all files
+            if len(important_files) < 0.3 * len(repo_files):
+                logger.warning("Too few important files identified, using all files")
+                return repo_files
+                
+            return important_files
+        except Exception as e:
+            logger.error(f"Error determining file importance: {e}")
+            # Fall back to using all files
+            return repo_files
     
     def _fallback_clustering(self, file_summaries: Dict[str, str], 
                            original_files: Dict[str, str],

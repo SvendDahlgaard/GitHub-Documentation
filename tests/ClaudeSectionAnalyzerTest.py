@@ -12,8 +12,8 @@ from dotenv import load_dotenv
 # Add parent directory to path to import modules
 sys.path.append('..')
 
-from ClaudeSummarizer import BatchClaudeAnalyzer
-from ClaudeSectionAnalyzer import LLMClusterAnalyzer
+from ClaudeBatchProcessor import BatchClaudeAnalyzer
+from ClaudeSectionCluster import LLMClusterAnalyzer
 from BasicSectionAnalyzer import SectionAnalyzer, AnalysisMethod
 from GithubClient import DirectGitHubClient
 

@@ -10,9 +10,9 @@ from dotenv import load_dotenv
 
 # Import modules
 from GithubClient import GithubClient
-from ClaudeSummarizer import BatchClaudeAnalyzer
+from ClaudeBatchProcessor import BatchClaudeAnalyzer
 from BasicSectionAnalyzer import BasicSectionAnalyzer, AnalysisMethod
-from LLMClusterAnalyzer import LLMClusterAnalyzer
+from ClaudeSectionCluster import LLMClusterAnalyzer
 from repo_cache import RepoCache
 
 # Load environment variables from .env file
