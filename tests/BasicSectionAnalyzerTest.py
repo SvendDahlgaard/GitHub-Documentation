@@ -240,7 +240,7 @@ def clear_cache():
     global _repo_files_cache
     _repo_files_cache.clear()
     
-    from repo_cache import RepoCache
+    from RepositoryCache import RepoCache
     cache = RepoCache()
     count = cache.clear_cache()
     print(f"Cleared {count} cache files")

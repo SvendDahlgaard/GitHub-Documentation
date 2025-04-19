@@ -4,7 +4,7 @@ import concurrent.futures
 import logging
 from github import Github
 from typing import List, Dict, Any, Optional, Set
-from repo_cache import RepoCache
+from RepositoryCache import RepoCache
 
 logger = logging.getLogger(__name__)
 

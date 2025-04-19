@@ -13,7 +13,7 @@ from GithubClient import GithubClient
 from ClaudeBatchProcessor import BatchClaudeAnalyzer
 from BasicSectionAnalyzer import BasicSectionAnalyzer, AnalysisMethod
 from ClaudeSectionCluster import LLMClusterAnalyzer
-from repo_cache import RepoCache
+from RepositoryCache import RepoCache
 
 # Load environment variables from .env file
 load_dotenv()

@@ -5,9 +5,8 @@ Run all tests for the GitHub Documentation tool.
 import os
 import sys
 from tests.GithubClientTest import test_github_token
-from section_analyzer_test import test_section_analyzer
+from tests.BasicSectionAnalyzerTest import test_section_analyzer
 from claude_test import test_claude_analyzer
-from mcp_client_test import test_mcp_github_client
 from tests.ClaudeBatchProcesserTest import test_mock_batch
 
 def main():
