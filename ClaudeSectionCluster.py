@@ -208,9 +208,12 @@ Choose descriptive cluster names that reflect the purpose of the grouped files.
         # Create a single section for the clustering request
         clustering_section = [(f"cluster_{dir_name}", {"clustering_prompt.md": clustering_prompt})]
         
+        clustering_model = "claude-3-5-haiku-20241022"
         # Use the batch analyzer to get the clustering result
-        result = self.batch_analyzer.analyze_sections_batch(clustering_section, 
-                                                      "Group these files into logical clusters based on functionality.")
+        result = self.batch_analyzer.analyze_sections_batch(
+            clustering_section, 
+            "Group these files into logical clusters based on functionality.",
+            model_overwrite = clustering_model)
         
         # Extract JSON response (with error handling)
         try:

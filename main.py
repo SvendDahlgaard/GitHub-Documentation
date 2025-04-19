@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 # Import modules
 from GithubClient import GithubClient
 from ClaudeBatchProcessor import BatchClaudeAnalyzer
-from BasicSectionAnalyzer import BasicSectionAnalyzer, AnalysisMethod
+from BasicSectionCluster import BasicSectionAnalyzer, AnalysisMethod
 from ClaudeSectionCluster import LLMClusterAnalyzer
 from RepositoryCache import RepoCache
 
@@ -153,10 +153,6 @@ def analyze_repository(args):
         import traceback
         traceback.print_exc()
         sys.exit(1)
-
-def analyze_sections_batch(sections, query, use_context, batch_analyzer, output_dir):
-    """Analyze all sections in a batch for efficiency."""
-    analyses = {}
     
 def analyze_sections_batch(sections, query, use_context, batch_analyzer, output_dir):
     """Analyze all sections in a batch for efficiency."""
@@ -264,7 +260,7 @@ def main():
                         help="Specifically include these file patterns")
     parser.add_argument("--output-dir", default="analysis", 
                         help="Directory to output analysis files")
-    parser.add_argument("--use-context", action="store_true", 
+    parser.add_argument("--use-context", action="store_true", default=True, 
                         help="Use context from previous sections in analysis")
     parser.add_argument("--no-cache", action="store_true",
                         help="Disable caching of repository files")

@@ -27,9 +27,9 @@ class ClaudeAPIClient:
         if not self.api_key:
             raise ValueError("Claude API key is required. Set it in .env file or pass directly.")
             
-        # Default to Claude 3.5 Haiku for best cost efficiency
-        self.claude_model = claude_model or "claude-3-5-haiku-20241022"
-        
+        # Default to Sonnet
+        self.claude_model = claude_model or "claude-3-5-sonnet-20240307" 
+
         # Standard headers for API requests
         self.headers = {
             "x-api-key": self.api_key,

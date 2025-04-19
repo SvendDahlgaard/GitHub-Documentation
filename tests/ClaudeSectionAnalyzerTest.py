@@ -14,7 +14,7 @@ sys.path.append('..')
 
 from ClaudeBatchProcessor import BatchClaudeAnalyzer
 from ClaudeSectionCluster import LLMClusterAnalyzer
-from BasicSectionAnalyzer import SectionAnalyzer, AnalysisMethod
+from BasicSectionCluster import SectionAnalyzer, AnalysisMethod
 from GithubClient import DirectGitHubClient
 
 def visualize_sections(sections, output_dir):

@@ -31,7 +31,7 @@ class BatchClaudeAnalyzer:
         
     def analyze_sections_batch(self, sections: List[Tuple[str, Dict[str, str]]], 
                               query: Optional[str] = None, 
-                              context_map: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+                              context_map: Optional[Dict[str, str]] = None, model_override=None) -> Dict[str, str]:
         """
         Analyze multiple code sections in a batch for optimal cost efficiency.
         
@@ -39,10 +39,13 @@ class BatchClaudeAnalyzer:
             sections: List of (section_name, files) tuples
             query: Specific query about the code sections
             context_map: Optional map of section_name to context string
+            model_override: Override the default model for this specific batch
             
         Returns:
             Dictionary mapping section names to analysis results
         """
+        model_to_use = model_override or self.claude_model
+
         if not sections:
             return {}
             
@@ -107,7 +110,7 @@ class BatchClaudeAnalyzer:
             batch_requests.append({
                 "custom_id": section_name,
                 "params": {
-                    "model": self.claude_model,
+                    "model": model_to_use,
                     "max_tokens": 3000,
                     "system": system_blocks,
                     "messages": messages
