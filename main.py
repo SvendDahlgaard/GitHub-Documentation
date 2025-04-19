@@ -138,7 +138,7 @@ def analyze_repository(args):
             json.dump(section_map, f, indent=2)
         
         # Analyze each section in batch
-        analyses = analyze_sections_batch(sections, args.query, args.use_context, claude_analyzer, args.output_dir)
+        analyses = create_summaries_batch(sections, args.query, args.use_context, claude_analyzer, args.output_dir)
         
         # Create the index file
         index = analyzer.create_section_index(sections, analyses)
@@ -154,7 +154,7 @@ def analyze_repository(args):
         traceback.print_exc()
         sys.exit(1)
     
-def analyze_sections_batch(sections, query, use_context, batch_analyzer, output_dir):
+def create_summaries_batch(sections, query, use_context, batch_analyzer, output_dir):
     """Analyze all sections in a batch for efficiency."""
     analyses = {}
     
@@ -168,7 +168,7 @@ def analyze_sections_batch(sections, query, use_context, batch_analyzer, output_
         print("DEBUG: First section data:", sections[0] if sections else "No sections")
         
         try:
-            analyses = batch_analyzer.analyze_sections_batch(sections, query)
+            analyses = batch_analyzer.analyze_sections_batch(sections = sections, model="claude-3-5-sonnet-20240307", query = query)
             print("DEBUG: Successfully called analyze_sections_batch")
         except Exception as e:
             print(f"DEBUG: Exception in analyze_sections_batch: {type(e).__name__}: {str(e)}")
@@ -192,7 +192,7 @@ def analyze_sections_batch(sections, query, use_context, batch_analyzer, output_
                 context_map[section_name] = context.strip()
             
             # Process this chunk as a batch
-            chunk_results = batch_analyzer.analyze_sections_batch(chunk, query, context_map)
+            chunk_results = batch_analyzer.analyze_sections_batch(chunk,model="claude-3-5-sonnet-20240307", query = query, context_map = context_map)
             analyses.update(chunk_results)
             
             # Update context for the next chunk

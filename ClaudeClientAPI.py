@@ -15,20 +15,17 @@ class ClaudeAPIClient:
     This client provides core functionality for both individual and batch requests.
     """
     
-    def __init__(self, api_key=None, claude_model=None):
+    def __init__(self, api_key=None):
         """
         Initialize the Claude API client.
         
         Args:
             api_key: Claude API key (if None, tries to read from environment)
-            claude_model: Claude model to use (defaults to Claude 3.5 Haiku for cost efficiency)
         """
         self.api_key = api_key or os.getenv("CLAUDE_API_KEY")
         if not self.api_key:
             raise ValueError("Claude API key is required. Set it in .env file or pass directly.")
             
-        # Default to Sonnet
-        self.claude_model = claude_model or "claude-3-5-sonnet-20240307" 
 
         # Standard headers for API requests
         self.headers = {
@@ -40,15 +37,16 @@ class ClaudeAPIClient:
         # Validate API key with a simple test
         try:
             self._test_api_connection()
-            logger.info(f"Successfully connected to Anthropic API using model: {self.claude_model}")
+            logger.info("Successfully connected to Anthropic API")
         except Exception as e:
             logger.error(f"Failed to connect to Anthropic API: {e}")
             raise
     
     def _test_api_connection(self):
         """Test the API connection with a simple request."""
+        test_model = "claude-3-5-haiku-20241022"
         data = {
-            "model": self.claude_model,
+            "model": test_model,
             "max_tokens": 10,
             "messages": [{"role": "user", "content": "Hello, this is a test."}]
         }
@@ -62,47 +60,6 @@ class ClaudeAPIClient:
         
         if response.status_code != 200:
             raise Exception(f"API connection test failed: {response.status_code} - {response.text}")
-    
-    def single_request(self, prompt: str, system_prompt: Optional[str] = None, 
-                      max_tokens: int = 1000) -> str:
-        """
-        Send a single request to Claude API.
-        
-        Args:
-            prompt: The user prompt to send
-            system_prompt: Optional system prompt
-            max_tokens: Maximum tokens in the response
-            
-        Returns:
-            Text response from Claude
-        """
-        try:
-            data = {
-                "model": self.claude_model,
-                "max_tokens": max_tokens,
-                "messages": [{"role": "user", "content": prompt}]
-            }
-            
-            if system_prompt:
-                data["system"] = system_prompt
-            
-            response = req.post(
-                "https://api.anthropic.com/v1/messages",
-                headers=self.headers,
-                json=data,
-                timeout=60
-            )
-            
-            if response.status_code != 200:
-                logger.error(f"Error in single request: {response.status_code} - {response.text}")
-                return f"Error: Failed to get response from Claude API (Status code: {response.status_code})"
-            
-            result = response.json()
-            return result["content"][0]["text"]
-            
-        except Exception as e:
-            logger.error(f"Error sending single request: {e}")
-            return f"Error: {str(e)}"
 
     def batch_request(self, request_list: List[Dict]) -> Dict[str, Any]:
         """

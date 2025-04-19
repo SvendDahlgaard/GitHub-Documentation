@@ -15,7 +15,7 @@ class LLMClusterAnalyzer:
     This approach leverages Claude's code understanding to group files based on functional relationships.
     """
     
-    def __init__(self, batch_analyzer=None, use_cache=True, max_batch_size=10):
+    def __init__(self, batch_analyzer=None, use_cache=True, max_batch_size=10, clustering_model = None):
         """
         Initialize the LLM cluster analyzer.
         
@@ -27,6 +27,8 @@ class LLMClusterAnalyzer:
         self.batch_analyzer = batch_analyzer
         self.use_cache = use_cache
         self.max_batch_size = max_batch_size
+        self.clustering_model = clustering_model or "claude-3-5-haiku-20241022"
+
     
     def analyze_repository(self, repo_files: Dict[str, str], 
                           method=None,  # Not used but included for interface consistency
@@ -120,7 +122,7 @@ class LLMClusterAnalyzer:
                 batch_sections.append((path, {"file.txt": content, "prompt.md": summary_prompt}))
             
             # Process this batch
-            batch_results = self.batch_analyzer.analyze_sections_batch(batch_sections, 
+            batch_results = self.batch_analyzer.analyze_sections_batch(batch_sections, self.clustering_model, 
                 "Summarize this file briefly, focusing on its purpose and relationships to other components.")
             
             # Add results to the overall summaries
@@ -208,12 +210,13 @@ Choose descriptive cluster names that reflect the purpose of the grouped files.
         # Create a single section for the clustering request
         clustering_section = [(f"cluster_{dir_name}", {"clustering_prompt.md": clustering_prompt})]
         
-        clustering_model = "claude-3-5-haiku-20241022"
+        #clustering_model = "claude-3-5-haiku-20241022"
         # Use the batch analyzer to get the clustering result
         result = self.batch_analyzer.analyze_sections_batch(
-            clustering_section, 
-            "Group these files into logical clusters based on functionality.",
-            model_overwrite = clustering_model)
+            sections = clustering_section, 
+            model = self.clustering_model,
+            query = "Group these files into logical clusters based on functionality."
+            )
         
         # Extract JSON response (with error handling)
         try:
