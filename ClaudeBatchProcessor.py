@@ -29,9 +29,9 @@ class BatchClaudeAnalyzer:
         self.use_prompt_caching = use_prompt_caching
         self.claude_model = self.api_client.claude_model
         
-    def analyze_sections_batch(self, sections: List[Tuple[str, Dict[str, str]]], model: str, 
+    def analyze_sections_batch(self, sections: List[Tuple[str, Dict[str, str]]], 
                               query: Optional[str] = None, 
-                              context_map: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+                              context_map: Optional[Dict[str, str]] = None, model: str = None) -> Dict[str, str]:
         """
         Analyze multiple code sections in a batch for optimal cost efficiency.
         

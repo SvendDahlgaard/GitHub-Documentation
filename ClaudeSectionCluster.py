@@ -122,8 +122,8 @@ class LLMClusterAnalyzer:
                 batch_sections.append((path, {"file.txt": content, "prompt.md": summary_prompt}))
             
             # Process this batch
-            batch_results = self.batch_analyzer.analyze_sections_batch(batch_sections, self.clustering_model, 
-                "Summarize this file briefly, focusing on its purpose and relationships to other components.")
+            batch_results = self.batch_analyzer.analyze_sections_batch(batch_sections, 
+                "Summarize this file briefly, focusing on its purpose and relationships to other components.", model = self.clustering_model)
             
             # Add results to the overall summaries
             file_summaries.update(batch_results)
@@ -214,8 +214,8 @@ Choose descriptive cluster names that reflect the purpose of the grouped files.
         # Use the batch analyzer to get the clustering result
         result = self.batch_analyzer.analyze_sections_batch(
             sections = clustering_section, 
-            model = self.clustering_model,
-            query = "Group these files into logical clusters based on functionality."
+            query = "Group these files into logical clusters based on functionality.",
+            model = self.clustering_model
             )
         
         # Extract JSON response (with error handling)
@@ -289,7 +289,8 @@ Choose descriptive cluster names that reflect the purpose of the grouped files.
         # Use the batch analyzer to get the evaluation
         result = self.batch_analyzer.analyze_sections_batch(
             importance_section, 
-            "Evaluate which files are most important for documentation."
+            "Evaluate which files are most important for documentation.",
+            model = self.clustering_model
         )
         
         # Extract JSON response (with error handling)
