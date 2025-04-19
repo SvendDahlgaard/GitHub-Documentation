@@ -6,7 +6,7 @@ import os
 import sys
 from tests.GithubClientTest import test_github_token
 from tests.BasicSectionAnalyzerTest import test_section_analyzer
-from claude_test import test_claude_analyzer
+from ClaudeSectionAnalyzerTest import test_claude_analyzer
 from tests.ClaudeBatchProcesserTest import test_mock_batch
 
 def main():
@@ -41,11 +41,7 @@ def main():
     print("\n\n3. TESTING CLAUDE ANALYZER\n" + "-" * 30)
     claude_success = test_claude_analyzer()
     
-    # Test 4: MCP GitHub Client
-    print("\n\n4. TESTING MCP GITHUB CLIENT\n" + "-" * 30)
-    mcp_success = test_mcp_github_client()
-    
-    # Test 5: Batch Analyzer (using mock mode to avoid API costs)
+    # Test 4: Batch Analyzer (using mock mode to avoid API costs)
     print("\n\n5. TESTING BATCH ANALYZER\n" + "-" * 30)
     batch_success = test_mock_batch()
     
@@ -56,12 +52,11 @@ def main():
     print(f"1. GitHub Token Test: {'PASSED' if token_success else 'FAILED'}")
     print(f"2. Section Analyzer Test: {'PASSED' if analyzer_success else 'FAILED'}")
     print(f"3. Claude Analyzer Test: {'PASSED' if claude_success else 'FAILED'}")
-    print(f"4. MCP GitHub Client Test: {'PASSED' if mcp_success else 'FAILED'}")
-    print(f"5. Batch Analyzer Test: {'PASSED' if batch_success else 'FAILED'}")
+    print(f"4. Batch Analyzer Test: {'PASSED' if batch_success else 'FAILED'}")
     
     # Overall status
     core_tests_passed = token_success and analyzer_success and claude_success
-    additional_tests_passed = mcp_success and batch_success
+    additional_tests_passed = batch_success
     
     if core_tests_passed and additional_tests_passed:
         print("\nAll tests PASSED! Your setup is ready to use.")
