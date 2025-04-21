@@ -112,10 +112,13 @@ class ClaudeAPIClient:
         Returns:
             Dictionary mapping custom_ids to results
         """
-        max_polls = 120  # 2 hours max (with 1 minute intervals)
+        max_polls = 120  # Maximum number of polling attempts
+        initial_poll_interval = 2  # Start with 2 seconds
+        max_poll_interval = 15  # Maximum interval of 15 seconds
+        current_interval = initial_poll_interval
         
         for i in range(max_polls):
-            logger.info(f"Polling batch status ({i+1}/{max_polls})...")
+            logger.info(f"Polling batch status (attempt {i+1}, interval: {current_interval}s)...")
             
             status_response = req.get(
                 f"https://api.anthropic.com/v1/messages/batches/{batch_id}",
@@ -125,13 +128,21 @@ class ClaudeAPIClient:
             
             if status_response.status_code != 200:
                 logger.error(f"Failed to get batch status: {status_response.status_code} - {status_response.text}")
+                # Use exponential backoff for errors
+                time.sleep(min(current_interval * 2, 60))
+                current_interval = min(current_interval * 2, 60)
                 continue
             
             status_data = status_response.json()
             processing_status = status_data.get("processing_status")
             request_counts = status_data.get("request_counts", {})
             
-            logger.info(f"Batch status: {processing_status}, Counts: {request_counts}")
+            # Calculate progress percentage
+            total_requests = sum(request_counts.values())
+            completed_requests = request_counts.get("completed", 0) + request_counts.get("failed", 0)
+            progress = (completed_requests / total_requests * 100) if total_requests > 0 else 0
+            
+            logger.info(f"Batch status: {processing_status}, Progress: {progress:.1f}% ({completed_requests}/{total_requests})")
             
             # Check if batch has ended
             if processing_status == "ended":
@@ -142,10 +153,19 @@ class ClaudeAPIClient:
                     logger.error("Batch ended but no results URL provided")
                     return {}
             
-            # Wait before polling again (1 minute)
-            time.sleep(60)
+            # Check if any requests are in progress
+            in_progress = request_counts.get("in_progress", 0)
+            if in_progress > 0:
+                # If requests are actively being processed, poll more frequently
+                current_interval = max(initial_poll_interval, current_interval / 2)
+            else:
+                # If just waiting in queue, gradually increase polling interval
+                current_interval = min(current_interval * 1.5, max_poll_interval)
+            
+            # Wait before polling again with variable interval
+            time.sleep(current_interval)
         
-        logger.error(f"Batch processing timed out after {max_polls} polls")
+        logger.error(f"Batch processing timed out after {max_polls} polling attempts")
         return {}
     
     def _retrieve_batch_results(self, results_url: str) -> Dict[str, str]:

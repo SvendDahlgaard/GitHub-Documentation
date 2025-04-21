@@ -15,19 +15,17 @@ class BatchClaudeAnalyzer:
     3. Using Claude 3.5 Haiku for cost efficiency
     """
     
-    def __init__(self, api_key=None, claude_model=None, use_prompt_caching=True):
+    def __init__(self, api_key=None, use_prompt_caching=True):
         """
         Initialize the batch Claude analyzer.
         
         Args:
             api_key: Claude API key (required)
-            claude_model: Claude model to use (defaults to Claude 3.5 Haiku for cost efficiency)
             use_prompt_caching: Whether to use prompt caching for additional cost savings
         """
         # Initialize the core API client
         self.api_client = ClaudeAPIClient(api_key)
         self.use_prompt_caching = use_prompt_caching
-        self.claude_model = self.api_client.claude_model
         
     def analyze_sections_batch(self, sections: List[Tuple[str, Dict[str, str]]], 
                               query: Optional[str] = None, 

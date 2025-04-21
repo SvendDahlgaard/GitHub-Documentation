@@ -319,8 +319,7 @@ class RepoCache:
                     os.remove(cache_file)
                     count += 1
                 except Exception as e:
-                    logger.error(f"Error removing cache file {cache_file}: {e}")
-                
+                    logger.error(f"Error removing cache file {cache_file}: {e}")         
         return count
     
     def _build_directory_structure(self, files: Dict[str, str]) -> Dict[str, Any]:
