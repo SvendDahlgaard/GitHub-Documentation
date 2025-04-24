@@ -28,7 +28,7 @@ class GithubClient:
         
         self.github = Github(token)
     
-    def list_repository_files(self, owner: str, repo: str, path: str = "", branch: str = None) -> List[Dict[str, Any]]:
+    def list_repository_files(self, owner: str, repo: str, path: str = "") -> List[Dict[str, Any]]:
         """
         List files in a repository path.
         
@@ -36,7 +36,6 @@ class GithubClient:
             owner: Repository owner
             repo: Repository name
             path: Path in the repository
-            branch: Branch to use
             
         Returns:
             List of file information dictionaries
@@ -45,7 +44,7 @@ class GithubClient:
             repository = self.github.get_repo(f"{owner}/{repo}")
             logger.debug(f"Getting contents from repository {repository.name}, path: {path}")
 
-            contents = repository.get_contents(path, ref=branch)
+            contents = repository.get_contents(path)
             # Handle both single file and directory cases
             if not isinstance(contents, list):
                 contents = [contents]
@@ -65,7 +64,7 @@ class GithubClient:
             logger.error(f"Error listing contents at '{path}': {error_msg}")
             raise e
     
-    def get_file_content(self, owner: str, repo: str, path: str, branch: str = None) -> str:
+    def get_file_content(self, owner: str, repo: str, path: str) -> str:
         """
         Get the content of a file.
         
@@ -73,14 +72,13 @@ class GithubClient:
             owner: Repository owner
             repo: Repository name
             path: Path to the file
-            branch: Branch to use
             
         Returns:
             Content of the file as string
         """
         try:
             repository = self.github.get_repo(f"{owner}/{repo}")
-            content = repository.get_contents(path, ref=branch)
+            content = repository.get_contents(path)
             
             if content.encoding == "base64":
                 return base64.b64decode(content.content).decode('utf-8')
@@ -88,24 +86,9 @@ class GithubClient:
         except Exception as e:
             logger.error(f"Error getting content for file '{path}': {e}")
             raise
+
     
-    def get_default_branch(self, owner: str, repo: str) -> str:
-        """
-        Get the default branch for a repository.
-        
-        Args:
-            owner: Repository owner
-            repo: Repository name
-            
-        Returns:
-            Name of the default branch
-        """
-        repository = self.github.get_repo(f"{owner}/{repo}")
-        default_branch = repository.default_branch
-        logger.info(f"Using default branch: {default_branch}")
-        return default_branch
-    
-    def get_repository_structure(self, owner: str, repo: str, branch: str = None, 
+    def get_repository_files(self, owner: str, repo: str, 
                                ignore_dirs: List[str] = None, max_file_size: int = 500000,
                                include_patterns: List[str] = None,
                                extensions: List[str] = None, 
@@ -118,7 +101,6 @@ class GithubClient:
         Args:
             owner: Repository owner
             repo: Repository name
-            branch: Branch to analyze
             ignore_dirs: Directories to ignore
             max_file_size: Maximum file size to include
             include_patterns: Patterns to specifically include
@@ -132,15 +114,11 @@ class GithubClient:
         """
         # Check if we can use cached data
         if self.use_cache and not force_refresh:
-            cached_files = self.cache.get_repo_files(owner, repo, branch)
+            cached_files = self.cache.get_repo_files(owner, repo)
             if cached_files:
                 logger.info(f"Using cached repository structure for {owner}/{repo}")
                 return cached_files
 
-        # Determine the branch to use
-        if branch is None:
-            branch = self.get_default_branch(owner, repo)
-            logger.info(f"Using default branch: {branch}")
 
         if ignore_dirs is None:
             ignore_dirs = ['.git', 'node_modules', '__pycache__', 'dist', 'build']
@@ -178,7 +156,7 @@ class GithubClient:
             visited_dirs.add(path)
             
             try:
-                items = self.list_repository_files(owner, repo, path, branch)
+                items = self.list_repository_files(owner, repo, path)
                 
                 for item in items:
                     item_path = item.get("path", "")
@@ -230,7 +208,7 @@ class GithubClient:
             with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
                 # Create a dict mapping future to file path for easy lookup when results come in
                 future_to_path = {
-                    executor.submit(self.get_file_content, owner, repo, path, branch): path 
+                    executor.submit(self.get_file_content, owner, repo, path): path 
                     for path in batch
                 }
                 
@@ -246,37 +224,6 @@ class GithubClient:
         
         # Cache the results if enabled
         if self.use_cache and result:
-            self.cache.cache_repo_files(owner, repo, result, branch)
+            self.cache.cache_repo_files(owner, repo, result)
         
         return result
-    
-    def get_repository_stats(self, owner: str, repo: str) -> Dict[str, Any]:
-        """
-        Get repository statistics and metadata.
-        
-        Args:
-            owner: Repository owner
-            repo: Repository name
-            
-        Returns:
-            Dictionary with repository statistics
-        """
-        repository = self.github.get_repo(f"{owner}/{repo}")
-        
-        stats = {
-            "name": repository.name,
-            "full_name": repository.full_name,
-            "description": repository.description,
-            "default_branch": repository.default_branch,
-            "language": repository.language,
-            "stars": repository.stargazers_count,
-            "forks": repository.forks_count,
-            "open_issues": repository.open_issues_count,
-            "created_at": repository.created_at.isoformat() if repository.created_at else None,
-            "updated_at": repository.updated_at.isoformat() if repository.updated_at else None,
-            "is_private": repository.private,
-            "is_archived": repository.archived,
-            "license": repository.license.name if repository.license else None
-        }
-        
-        return stats

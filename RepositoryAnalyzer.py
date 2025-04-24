@@ -42,13 +42,6 @@ class RepositoryAnalyzer:
         Returns:
             True if analysis was successful, False otherwise
         """
-        # Check for cached structure if enabled
-        repo_structure = None
-        if self.cache is not None and not args.no_cache:
-            logger.info(f"Checking for cached repository structure for {args.owner}/{args.repo}")
-            repo_structure = self.cache.get_repo_structure(args.owner, args.repo, args.branch)
-            if repo_structure:
-                logger.info(f"Found cached repository structure with {repo_structure.get('file_count', 0)} files")
         
         # Initialize Claude analyzer for batch processing
         try:
@@ -77,17 +70,16 @@ class RepositoryAnalyzer:
             # Get repository files - first check cache if we can use it
             repo_files = None
             if self.cache and not args.no_cache and not args.force_refresh:
-                repo_files = self.cache.get_repo_files(args.owner, args.repo, args.branch)
+                repo_files = self.cache.get_repo_files(args.owner, args.repo)
                 if repo_files:
                     logger.info(f"Using {len(repo_files)} files from cache for {args.owner}/{args.repo}")
                 
             # If not in cache or cache disabled, fetch from GitHub
             if not repo_files:
                 logger.info(f"Fetching repository structure for {args.owner}/{args.repo}")
-                repo_files = self.github_client.get_repository_structure(
+                repo_files = self.github_client.get_repository_files(
                     args.owner, 
                     args.repo, 
-                    branch=args.branch,
                     ignore_dirs=args.ignore,
                     max_file_size=args.max_file_size,
                     include_patterns=args.include_files,
@@ -96,7 +88,7 @@ class RepositoryAnalyzer:
                     batch_size=args.batch_size,
                     max_workers=args.max_workers
                 )
-            
+             
             if not repo_files:
                 logger.error("No files found or all files were filtered out")
                 return False
@@ -109,18 +101,8 @@ class RepositoryAnalyzer:
                 section_method = self._get_analysis_method(args.section_method)
                 logger.info(f"Using {section_method.name} analysis method for basic section analyzer")
             
-            # Try to get repository metadata 
-            if self.cache and not args.no_cache:
-                try:
-                    repo_metadata = self.github_client.get_repository_stats(args.owner, args.repo)
-                    if repo_metadata:
-                        logger.info(f"Retrieved repository metadata for {args.owner}/{args.repo}")
-                        self.cache.save_repo_metadata(args.owner, args.repo, repo_metadata, args.branch)
-                except Exception as e:
-                    logger.warning(f"Could not retrieve repository metadata: {e}")
-            
             # Identify logical sections
-            sections = analyzer.analyze_repository(
+            sections = analyzer.cluster_repository(
                 repo_files, 
                 method=section_method,
                 max_section_size=args.max_section_size,
@@ -134,7 +116,7 @@ class RepositoryAnalyzer:
             with open(os.path.join(args.output_dir, "sections.json"), "w") as f:
                 json.dump(section_map, f, indent=2)
             
-            # Analyze each section in batch
+            # Summarize each section in batch
             analyses = self.claude_summarizer.create_summaries_batch(
                 sections, 
                 args.query, 

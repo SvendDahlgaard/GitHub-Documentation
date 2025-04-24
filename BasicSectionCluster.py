@@ -31,7 +31,7 @@ class BasicSectionAnalyzer:
         self.claude_analyzer = claude_analyzer
         self.use_cache = use_cache
     
-    def analyze_repository(self, repo_files: Dict[str, str], 
+    def cluster_repository(self, repo_files: Dict[str, str], 
                          method: AnalysisMethod = AnalysisMethod.STRUCTURAL,
                          max_section_size: int = 15,
                          min_section_size: int = 2) -> List[Tuple[str, Dict[str, str]]]:

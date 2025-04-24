@@ -55,7 +55,7 @@ class ClaudeAPIClient:
             "https://api.anthropic.com/v1/messages",
             headers=self.headers,
             json=data,
-            timeout=10
+            timeout=30
         )
         
         if response.status_code != 200:

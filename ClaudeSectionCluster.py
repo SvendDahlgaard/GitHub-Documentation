@@ -30,7 +30,7 @@ class LLMClusterAnalyzer:
         self.clustering_model = clustering_model or "claude-3-5-haiku-20241022"
 
     
-    def analyze_repository(self, repo_files: Dict[str, str], 
+    def cluster_repository(self, repo_files: Dict[str, str], 
                           method=None,  # Not used but included for interface consistency
                           max_section_size: int = 15,
                           min_section_size: int = 2,

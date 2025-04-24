@@ -79,7 +79,6 @@ def main():
         logger.info(f"Successfully initialized GitHub client")
         
         # Initialize Claude analyzer for batch processing
-        logger.info(f"Prompt param value: {args.prompt_cache}. Negated value {not args.prompt_cache}")
         batch_analyzer = BatchClaudeAnalyzer(
             use_prompt_caching= args.prompt_cache
         )
