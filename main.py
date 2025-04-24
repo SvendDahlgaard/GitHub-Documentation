@@ -61,6 +61,8 @@ def parse_arguments():
                         help="Maximum number of concurrent workers for file extraction (default: 5)")
     parser.add_argument("--verbose", "-v", action="store_true", 
                         help="Enable verbose logging")
+    parser.add_argument("--auto-filter", default=True,
+                        help="Determines whether to use automatic filtering of less important files")
     
     return parser.parse_args()
 

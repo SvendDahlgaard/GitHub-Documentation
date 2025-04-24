@@ -13,7 +13,7 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from GithubClient import GithubClient
-from BasicSectionCluster import BasicSectionAnalyzer, AnalysisMethod
+from ClusteringAdhoc import BasicSectionAnalyzer, AnalysisMethod
 from ClaudeBatchProcessor import BatchClaudeAnalyzer
 
 # Load environment variables

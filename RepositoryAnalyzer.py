@@ -7,8 +7,8 @@ from typing import List, Dict, Any, Tuple, Set
 from datetime import datetime
 
 from GithubClient import GithubClient
-from BasicSectionCluster import BasicSectionAnalyzer, AnalysisMethod
-from ClaudeSectionCluster import LLMClusterAnalyzer
+from ClusteringAdhoc import BasicSectionAnalyzer, AnalysisMethod
+from ClusteringClaude import LLMClusterAnalyzer
 from RepositoryCache import RepoCache
 
 logger = logging.getLogger(__name__)
@@ -110,7 +110,8 @@ class RepositoryAnalyzer:
                 repo_files, 
                 method=section_method,
                 max_section_size=args.max_section_size,
-                min_section_size=args.min_section_size
+                min_section_size=args.min_section_size,
+                auto_filter = args.auto_filter 
             )
             
             logger.info(f"Identified {len(sections)} logical sections")

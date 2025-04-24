@@ -6,6 +6,8 @@ import logging
 import networkx as nx
 from enum import Enum, auto
 
+from BaseClusteringAbstractClass import BaseRepositoryAnalyzer
+
 logger = logging.getLogger(__name__)
 
 class AnalysisMethod(Enum):
@@ -14,7 +16,7 @@ class AnalysisMethod(Enum):
     DEPENDENCY = auto()  # Dependency-based analysis
     HYBRID = auto()      # Combined approach
 
-class BasicSectionAnalyzer:
+class BasicSectionAnalyzer(BaseRepositoryAnalyzer):
     """
     Analyzes a repository using algorithmic methods to divide it into logical sections.
     This class provides traditional approaches like structural and dependency-based analysis.
@@ -28,13 +30,13 @@ class BasicSectionAnalyzer:
             claude_analyzer: The Claude analyzer for code analysis
             use_cache: Whether to use caching for results
         """
-        self.claude_analyzer = claude_analyzer
-        self.use_cache = use_cache
+        super().__init__(claude_analyzer, use_cache)
     
     def cluster_repository(self, repo_files: Dict[str, str], 
-                         method: AnalysisMethod = AnalysisMethod.STRUCTURAL,
-                         max_section_size: int = 15,
-                         min_section_size: int = 2) -> List[Tuple[str, Dict[str, str]]]:
+                           method: AnalysisMethod = AnalysisMethod.STRUCTURAL,
+                           max_section_size: int = 15,
+                           min_section_size: int = 2,
+                           auto_filter: bool = True) -> List[Tuple[str, Dict[str, str]]]:
         """
         Analyze repository using the specified method.
         
@@ -43,10 +45,16 @@ class BasicSectionAnalyzer:
             method: Analysis method to use
             max_section_size: Maximum number of files in a section before subdivision
             min_section_size: Minimum number of files in a section (smaller sections will be merged)
+            auto_filter: Whether to automatically filter less important files
             
         Returns:
             List of tuples (section_name, {file_path: content})
         """
+        # First, apply file filtering if auto_filter is enabled
+        if auto_filter:
+            repo_files = self.filter_important_files(repo_files)
+            logger.info(f"Filtered to {len(repo_files)} important files for analysis")
+        
         if method == AnalysisMethod.STRUCTURAL:
             sections = self.structural_analysis(repo_files, max_section_size)
         elif method == AnalysisMethod.DEPENDENCY:
@@ -63,88 +71,6 @@ class BasicSectionAnalyzer:
             
         return sections
     
-    def _merge_small_sections(self, sections: List[Tuple[str, Dict[str, str]]], 
-                           min_size: int) -> List[Tuple[str, Dict[str, str]]]:
-        """
-        Merge sections that are smaller than the minimum size.
-        
-        Strategy:
-        1. Keep all sections that meet the minimum size
-        2. Group small sections by their parent directory/category
-        3. Merge small sections within the same group
-        4. If merged sections are still too small, add them to a "miscellaneous" section
-        
-        Args:
-            sections: List of (section_name, files) tuples
-            min_size: Minimum number of files in a section
-            
-        Returns:
-            List of merged sections
-        """
-        if min_size <= 1:
-            return sections
-            
-        # Separate large and small sections
-        large_sections = []
-        small_sections = []
-        
-        for name, files in sections:
-            if len(files) >= min_size:
-                large_sections.append((name, files))
-            else:
-                small_sections.append((name, files))
-        
-        if not small_sections:
-            return large_sections
-            
-        # Group small sections by parent category
-        parent_groups = defaultdict(list)
-        for name, files in small_sections:
-            # Use first part of the section name as the parent category
-            parent = name.split('/')[0]
-            parent_groups[parent].append((name, files))
-        
-        # Merge small sections within the same parent category
-        merged_sections = []
-        for parent, group_sections in parent_groups.items():
-            if not group_sections:
-                continue
-                
-            # Merge files from all sections in this group
-            merged_files = {}
-            for _, files in group_sections:
-                merged_files.update(files)
-            
-            # If the merged section is large enough, add it
-            if len(merged_files) >= min_size:
-                # Create a name based on the parent and number of merged sections
-                if len(group_sections) > 1:
-                    merged_name = f"{parent}/merged_{len(group_sections)}_sections"
-                else:
-                    merged_name = group_sections[0][0]
-                merged_sections.append((merged_name, merged_files))
-            else:
-                # If still too small, add to a pending list for further merging
-                merged_sections.append((f"{parent}/small_files", merged_files))
-        
-        # Final step: handle any remaining small sections
-        final_merged_sections = []
-        misc_files = {}
-        
-        for name, files in merged_sections:
-            if len(files) >= min_size:
-                final_merged_sections.append((name, files))
-            else:
-                # Add to miscellaneous bucket
-                misc_files.update(files)
-        
-        # If we have miscellaneous files, create a section for them
-        if misc_files:
-            final_merged_sections.append(("miscellaneous", misc_files))
-        
-        # Return large sections plus merged small sections
-        return large_sections + final_merged_sections
-        
     def structural_analysis(self, repo_files: Dict[str, str], 
                           max_section_size: int = 15) -> List[Tuple[str, Dict[str, str]]]:
         """
@@ -316,7 +242,7 @@ class BasicSectionAnalyzer:
                     renamed_subsections = []
                     for i, (subsection_name, subsection_files) in enumerate(subsections):
                         # Use original subsection name if it's more descriptive than a number
-                        if re.match(r'^(module|component|group)_\d+$', subsection_name):
+                        if re.match(r'^(module|component|group)_\d+, subsection_name)'):
                             new_name = f"{section_name}/subsection_{i+1}"
                         else:
                             new_name = f"{section_name}/{subsection_name}"
@@ -404,7 +330,17 @@ class BasicSectionAnalyzer:
     def _fallback_dependency_grouping(self, repo_files: Dict[str, str], 
                                     dependencies: Dict[str, Set[str]],
                                     max_section_size: int) -> List[Tuple[str, Dict[str, str]]]:
-        """Fallback method for when network analysis is unavailable."""
+        """
+        Fallback method for when network analysis is unavailable.
+        
+        Args:
+            repo_files: Dictionary mapping file paths to contents
+            dependencies: Map of file paths to their dependencies
+            max_section_size: Maximum section size
+            
+        Returns:
+            List of section tuples
+        """
         # Group files by their directory first
         dir_groups = defaultdict(list)
         for path in repo_files:
@@ -549,7 +485,15 @@ class BasicSectionAnalyzer:
             return self._fallback_dependency_grouping(files, dependencies, max_section_size)
     
     def _find_common_prefix(self, paths: List[str]) -> str:
-        """Find common directory prefix among paths."""
+        """
+        Find common directory prefix among paths.
+        
+        Args:
+            paths: List of file paths
+            
+        Returns:
+            Common prefix string
+        """
         if not paths:
             return ""
             
@@ -574,7 +518,17 @@ class BasicSectionAnalyzer:
     
     def _subdivide_section(self, section_name: str, files: Dict[str, str], 
                          max_section_size: int = 15) -> List[Tuple[str, Dict[str, str]]]:
-        """Subdivide a large section into smaller ones based on patterns."""
+        """
+        Subdivide a large section into smaller ones based on patterns.
+        
+        Args:
+            section_name: Name of the section to subdivide
+            files: Files in the section
+            max_section_size: Maximum section size
+            
+        Returns:
+            List of subdivided sections
+        """
         # Try to identify logical groups by file patterns
         groups = defaultdict(dict)
         
@@ -639,54 +593,15 @@ class BasicSectionAnalyzer:
         return final_result
     
     def _chunk_by_size(self, files: Dict[str, str], chunk_size: int) -> List[Dict[str, str]]:
-        """Split files into chunks of approximately chunk_size."""
+        """
+        Split files into chunks of approximately chunk_size.
+        
+        Args:
+            files: Dictionary of files to chunk
+            chunk_size: Maximum number of files per chunk
+            
+        Returns:
+            List of dictionaries representing chunks
+        """
         items = list(files.items())
         return [dict(items[i:i+chunk_size]) for i in range(0, len(items), chunk_size)]
-    
-    def create_section_index(self, sections: List[Tuple[str, Dict[str, str]]], analyses: Dict[str, str]) -> str:
-        """Create an index/directory of all analyzed sections with links."""
-        # Build a table of contents
-        toc_parts = ["# Repository Analysis Index\n\n"]
-        toc_parts.append("## Sections\n\n")
-        
-        # Group sections by top-level directory
-        grouped_sections = defaultdict(list)
-        for section_name, _ in sections:
-            top_level = section_name.split('/')[0]
-            grouped_sections[top_level].append(section_name)
-        
-        # Add TOC entries for each group
-        for group, section_names in sorted(grouped_sections.items()):
-            toc_parts.append(f"### {group}\n\n")
-            for section_name in sorted(section_names):
-                # Get file count
-                _, files = next((s, f) for s, f in sections if s == section_name)
-                file_count = len(files)
-                
-                # Create a sanitized anchor link
-                anchor = section_name.replace('/', '_').replace('.', '_').lower()
-                toc_parts.append(f"- [{section_name}](#{anchor}) ({file_count} files)\n")
-            toc_parts.append("\n")
-        
-        # Add section analyses
-        toc_parts.append("## Analysis by Section\n\n")
-        
-        for section_name, files in sections:
-            anchor = section_name.replace('/', '_').replace('.', '_').lower()
-            toc_parts.append(f"<h3 id='{anchor}'>{section_name} ({len(files)} files)</h3>\n\n")
-            
-            # List the files in this section
-            toc_parts.append("**Files:**\n\n")
-            for path in sorted(files.keys()):
-                toc_parts.append(f"- `{path}`\n")
-            toc_parts.append("\n")
-            
-            # Add the analysis
-            if section_name in analyses:
-                toc_parts.append("**Analysis:**\n\n")
-                toc_parts.append(analyses[section_name])
-                toc_parts.append("\n\n---\n\n")
-            else:
-                toc_parts.append("*No analysis available for this section.*\n\n---\n\n")
-        
-        return "".join(toc_parts)

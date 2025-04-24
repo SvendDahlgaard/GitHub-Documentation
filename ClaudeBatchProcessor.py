@@ -3,7 +3,7 @@ import logging
 import re
 from typing import Dict, List, Tuple, Any, Optional
 
-from ClaudeClientAPI import ClaudeAPIClient, OptimizedPromptManager
+from ClaudeClient import ClaudeAPIClient, OptimizedPromptManager
 
 logger = logging.getLogger(__name__)
 
