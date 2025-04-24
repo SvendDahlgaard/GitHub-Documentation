@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 from GithubClient import GithubClient
 from ClaudeBatchProcessor import BatchClaudeAnalyzer
 from RepositoryAnalyzer import RepositoryAnalyzer
-from ClaudeSummarizer import ClaudeSummarizer  # This now uses our updated implementation
+from ClaudeSummarizer import ClaudeSummarizer
 
 # Load environment variables from .env file
 load_dotenv()
@@ -46,7 +46,7 @@ def parse_arguments():
     parser.add_argument("--include-files", nargs="*", default=[], 
                         help="Specifically include these file patterns")
     parser.add_argument("--output-dir", default="analysis", 
-                        help="Directory to output analysis files")
+                        help="Base directory for output files (repository-specific directories will be created)")
     parser.add_argument("--use-context", default=True, 
                         help="Use context from previous sections in analysis")
     parser.add_argument("--no-cache", default=False,
@@ -80,7 +80,7 @@ def main():
         
         # Initialize Claude analyzer for batch processing
         batch_analyzer = BatchClaudeAnalyzer(
-            use_prompt_caching=args.prompt_cache
+            use_prompt_caching= args.prompt_cache
         )
         logger.info(f"Using Claude Batch API for analysis with model: {args.claude_model}")
         logger.info(f"Prompt caching: {'enabled' if args.prompt_cache else 'disabled'}")
@@ -88,10 +88,13 @@ def main():
         # Make the batch analyzer available to the args for use in RepositoryAnalyzer
         args.batch_analyzer = batch_analyzer
         
-        # Initialize Claude summarizer
+        # Create base output directory if it doesn't exist
+        os.makedirs(args.output_dir, exist_ok=True)
+        
+        # Initialize Claude summarizer - output directory for sections will be set in RepositoryAnalyzer
         claude_summarizer = ClaudeSummarizer(
             batch_analyzer=batch_analyzer,
-            output_dir=args.output_dir
+            output_dir=args.output_dir  # This will be refined in RepositoryAnalyzer
         )
         
         # Initialize repository analyzer
@@ -105,7 +108,9 @@ def main():
         success = repo_analyzer.analyze_repository(args)
         
         if success:
-            logger.info("Repository analysis completed successfully")
+            repo_output_dir = os.path.join(args.output_dir, f"{args.owner}_{args.repo}")
+            logger.info(f"Repository analysis completed successfully")
+            logger.info(f"Output files are in: {repo_output_dir}")
             return 0
         else:
             logger.error("Repository analysis failed")

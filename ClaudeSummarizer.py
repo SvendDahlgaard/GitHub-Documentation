@@ -18,11 +18,22 @@ class ClaudeSummarizer(BaseClaudeService):
         
         Args:
             batch_analyzer: BatchClaudeAnalyzer instance for Claude API calls
-            output_dir: Directory to output analysis files
+            output_dir: Base directory for output files
         """
         super().__init__(batch_analyzer)
-        self.output_dir = output_dir
+        self.base_output_dir = output_dir
+        self.current_output_dir = output_dir
         os.makedirs(output_dir, exist_ok=True)
+        
+    def set_output_directory(self, repo_output_dir: str):
+        """
+        Set the repository-specific output directory.
+        
+        Args:
+            repo_output_dir: Repository-specific output directory
+        """
+        self.current_output_dir = repo_output_dir
+        os.makedirs(repo_output_dir, exist_ok=True)
         
     def create_section_summaries(self, 
                                sections: List[Tuple[str, Dict[str, str]]], 
@@ -80,7 +91,7 @@ class ClaudeSummarizer(BaseClaudeService):
             # Store the result
             analyses[section_name] = result
             
-            # Save to file
+            # Save to file in the repository-specific directory
             self._save_analysis(section_name, result)
             
             # Update accumulated context if this wasn't an error
@@ -145,7 +156,7 @@ class ClaudeSummarizer(BaseClaudeService):
     
     def _save_analysis(self, section_name: str, analysis: str) -> None:
         """
-        Save a section analysis to a markdown file.
+        Save a section analysis to a markdown file in the current output directory.
         
         Args:
             section_name: Name of the section
@@ -154,7 +165,7 @@ class ClaudeSummarizer(BaseClaudeService):
         try:
             # Create a safe filename
             section_filename = section_name.replace('/', '_').replace('\\', '_')
-            filepath = os.path.join(self.output_dir, f"{section_filename}.md")
+            filepath = os.path.join(self.current_output_dir, f"{section_filename}.md")
             
             with open(filepath, "w", encoding="utf-8") as f:
                 f.write(f"# {section_name}\n\n")

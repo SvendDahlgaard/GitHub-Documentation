@@ -4,13 +4,11 @@ import json
 import logging
 from pathlib import Path
 from typing import List, Dict, Any, Tuple, Set
+from datetime import datetime
 
 from GithubClient import GithubClient
 from BasicSectionCluster import BasicSectionAnalyzer, AnalysisMethod
-# You can either update the import here if you renamed the file:
-from ClaudeSectionCluster import LLMClusterAnalyzer  # Original import
-# Or use this if you're keeping the new file as ImprovedClaudeSectionCluster.py:
-# from ImprovedClaudeSectionCluster import LLMClusterAnalyzer
+from ClaudeSectionCluster import LLMClusterAnalyzer
 from RepositoryCache import RepoCache
 
 logger = logging.getLogger(__name__)
@@ -66,8 +64,11 @@ class RepositoryAnalyzer:
             logger.error(f"Failed to initialize section analyzer: {e}")
             return False
         
-        # Create output directory if it doesn't exist
-        os.makedirs(args.output_dir, exist_ok=True)
+        # Create repository-specific output directory
+        repo_output_dir = self._create_repo_output_dir(args.owner, args.repo, args.output_dir)
+        
+        # Update the summarizer's output directory to the repository-specific one
+        self.claude_summarizer.set_output_directory(repo_output_dir)
         
         try:
             # Get repository files - first check cache if we can use it
@@ -116,10 +117,10 @@ class RepositoryAnalyzer:
             
             # Save section mapping for reference
             section_map = {section: list(files.keys()) for section, files in sections}
-            with open(os.path.join(args.output_dir, "sections.json"), "w") as f:
+            with open(os.path.join(repo_output_dir, "sections.json"), "w") as f:
                 json.dump(section_map, f, indent=2)
             
-            # Summarize each section with improved method
+            # Summarize each section
             analyses = self.claude_summarizer.create_section_summaries(
                 sections, 
                 args.query, 
@@ -127,9 +128,9 @@ class RepositoryAnalyzer:
                 model=args.claude_model
             )
             
-            # Create the index file
+            # Create the index file with a unique name
             index = analyzer.create_section_index(sections, analyses)
-            index_path = os.path.join(args.output_dir, "index.md")
+            index_path = self._create_unique_index_path(repo_output_dir, args.owner, args.repo)
             with open(index_path, "w") as f:
                 f.write(index)
                 
@@ -150,3 +151,40 @@ class RepositoryAnalyzer:
             "hybrid": AnalysisMethod.HYBRID
         }
         return method_map.get(method_name.lower(), AnalysisMethod.STRUCTURAL)
+    
+    def _create_repo_output_dir(self, owner: str, repo: str, base_output_dir: str) -> str:
+        """
+        Create a repository-specific output directory.
+        
+        Args:
+            owner: Repository owner
+            repo: Repository name
+            base_output_dir: Base output directory
+            
+        Returns:
+            Path to the repository-specific output directory
+        """
+        # Create a unique directory for this repository
+        repo_dir = os.path.join(base_output_dir, f"{owner}_{repo}")
+        os.makedirs(repo_dir, exist_ok=True)
+        return repo_dir
+    
+    def _create_unique_index_path(self, repo_output_dir: str, owner: str, repo: str) -> str:
+        """
+        Create a unique path for the index file based on repository and timestamp.
+        
+        Args:
+            repo_output_dir: Repository output directory
+            owner: Repository owner
+            repo: Repository name
+            
+        Returns:
+            Path to the unique index file
+        """
+        # Create a timestamp string
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # Create a unique filename for the index
+        index_filename = f"{owner}_{repo}_{timestamp}_index.md"
+        
+        return os.path.join(repo_output_dir, index_filename)

@@ -1,5 +1,6 @@
 import os
 import logging
+import re
 from typing import Dict, List, Tuple, Any, Optional
 
 from ClaudeClientAPI import ClaudeAPIClient, OptimizedPromptManager
@@ -26,6 +27,30 @@ class BatchClaudeAnalyzer:
         # Initialize the core API client
         self.api_client = ClaudeAPIClient(api_key)
         self.use_prompt_caching = use_prompt_caching
+    
+    def _sanitize_custom_id(self, custom_id: str) -> str:
+        """
+        Sanitize a custom ID to ensure it meets Claude API requirements.
+        Custom IDs must only contain alphanumeric characters, underscores, and hyphens.
+        
+        Args:
+            custom_id: Original custom ID
+            
+        Returns:
+            Sanitized custom ID that meets API requirements
+        """
+        # Replace any invalid characters with underscores
+        sanitized = re.sub(r'[^a-zA-Z0-9_-]', '_', custom_id)
+        
+        # Ensure it's not longer than 64 characters
+        if len(sanitized) > 64:
+            sanitized = sanitized[:64]
+            
+        # Ensure it's not empty
+        if not sanitized:
+            sanitized = "section"
+            
+        return sanitized
         
     def analyze_sections_batch(self, sections: List[Tuple[str, Dict[str, str]]], 
                               query: Optional[str] = None, 
@@ -51,6 +76,9 @@ class BatchClaudeAnalyzer:
         
         # Prepare batch requests
         batch_requests = []
+        
+        # Create a mapping from sanitized section names to original ones
+        sanitized_to_original = {}
         
         for section_name, files in sections:
             # Format the files for Claude
@@ -102,9 +130,13 @@ class BatchClaudeAnalyzer:
                     }
                 ]
             
+            # Sanitize the custom_id to ensure it meets API requirements
+            sanitized_id = self._sanitize_custom_id(section_name)
+            sanitized_to_original[sanitized_id] = section_name
+            
             # Create the batch request entry
             batch_requests.append({
-                "custom_id": section_name,
+                "custom_id": sanitized_id,
                 "params": {
                     "model": model,
                     "max_tokens": 3000,
@@ -114,7 +146,15 @@ class BatchClaudeAnalyzer:
             })
         
         # Send the batch request using the API client
-        return self.api_client.batch_request(batch_requests)
+        batch_results = self.api_client.batch_request(batch_requests)
+        
+        # Map results back to original section names
+        results = {}
+        for sanitized_id, result in batch_results.items():
+            original_name = sanitized_to_original.get(sanitized_id, sanitized_id)
+            results[original_name] = result
+            
+        return results
     
     def _get_timestamp(self):
         """Get current timestamp for logging and file naming."""

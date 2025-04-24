@@ -240,44 +240,71 @@ Choose descriptive cluster names that reflect the purpose of the grouped files.
         """
         # Prepare file metadata for all files
         file_metadata = []
+        total_files = len(repo_files)
+        code_extensions = ['.py', '.js', '.java', '.cs', '.ts', '.go', '.rb', '.php', '.cpp', '.c', '.h']
+        
+        # Track code files for stats
+        code_files_count = 0
+        
         for path, content in repo_files.items():
             extension = os.path.splitext(path)[1]
+            is_code = extension.lower() in code_extensions
+            if is_code:
+                code_files_count += 1
+                
             file_metadata.append({
                 "path": path,
                 "extension": extension,
                 "size": len(content),
                 "lines": content.count('\n') + 1,
                 "is_test": "test" in path.lower() or path.startswith("tests/"),
+                "is_code_file": is_code,
                 "preview": content[:300] + "..." if len(content) > 300 else content
             })
         
         # Create metadata JSON for Claude
         metadata_json = json.dumps(file_metadata)
         
+        # Calculate the target percentage of files to keep based on repo size
+        # For larger repos, keep a higher percentage of code files
+        if total_files > 500:
+            target_percentage = 80  # Keep at least 80% of code files for large repos
+        elif total_files > 200:
+            target_percentage = 70  # Keep at least 70% for medium repos
+        else:
+            target_percentage = 60  # Keep at least 60% for small repos
+        
         # Create a prompt for Claude to evaluate file importance
         importance_prompt = f"""You are helping analyze a codebase for documentation purposes.
-Below is metadata about files in the repository. Determine which files are most important
-to include in documentation and which can be safely excluded.
+    Below is metadata about {total_files} files in the repository, of which {code_files_count} are code files.
 
-Important files typically include:
-- Core functionality and business logic
-- Main interfaces and APIs
-- Configuration and setup files
-- Type definitions and data models
+    IMPORTANT INSTRUCTION: DO NOT FILTER TOO AGGRESSIVELY. Keep AT LEAST {target_percentage}% of the code files.
 
-Less important files typically include:
-- Auto-generated code
-- Trivial configuration files (like .gitignore)
-- Test fixtures and test output
-- Duplicate or near-duplicate files
-- Very small utility files with minimal content
+    Select files to include in the documentation based on these guidelines:
 
-File metadata:
-{metadata_json}
+    ALWAYS INCLUDE:
+    - All main code files (files with extensions like .py, .js, .java, etc.)
+    - Core functionality and business logic files
+    - API and interface definitions
+    - Configuration files that define system behavior
+    - Data models and type definitions
 
-Return a JSON array of paths for files that SHOULD be included in documentation.
-Format: ["file1.py", "file2.js", ...]
-"""
+    USUALLY EXCLUDE:
+    - Build artifacts and compiled files
+    - Auto-generated code
+    - Purely test data files (but keep actual test code)
+    - Duplicate files
+    - Empty or near-empty files
+    - Binary files
+
+    File metadata:
+    {metadata_json}
+
+    Return a JSON array of paths for files that SHOULD be included in documentation.
+    Format: ["file1.py", "file2.js", ...]
+
+    Remember: It's better to include too many files than too few. If in doubt, include the file.
+    """
         
         # Prepare content for Claude
         content = {"importance_evaluation.md": importance_prompt}
@@ -306,20 +333,75 @@ Format: ["file1.py", "file2.js", ...]
                 
                 logger.info(f"Identified {len(important_files)} important files out of {len(repo_files)} total")
                 
-                # If too few files were selected, return all files
-                if len(important_files) < 0.3 * len(repo_files):
-                    logger.warning("Too few important files identified, using all files")
-                    return repo_files
-                    
+                # If too few files were selected, enforce the minimum percentage
+                min_code_files = int(code_files_count * (target_percentage / 100))
+                important_code_files = sum(1 for path in important_files if os.path.splitext(path)[1].lower() in code_extensions)
+                
+                if important_code_files < min_code_files:
+                    logger.warning(f"Too few code files selected ({important_code_files} < {min_code_files}), using basic filtering")
+                    # Fall back to basic filtering - keep all code files and important non-code files
+                    return self._basic_file_filter(repo_files, code_extensions)
+                        
                 return important_files
             else:
                 logger.error("Could not find JSON array in the response")
-                return repo_files
-                
+                return self._basic_file_filter(repo_files, code_extensions)
+                    
         except Exception as e:
             logger.error(f"Error determining file importance: {e}")
             # Fall back to using all files
-            return repo_files
+            return self._basic_file_filter(repo_files, code_extensions)
+    
+    def _basic_file_filter(self, repo_files: Dict[str, str], code_extensions: List[str]) -> Dict[str, str]:
+        """
+        Basic fallback filter that keeps all code files and important non-code files.
+        
+        Args:
+            repo_files: Dictionary mapping file paths to contents
+            code_extensions: List of code file extensions
+            
+        Returns:
+            Filtered dictionary of files
+        """
+        logger.info("Using basic file filtering")
+        
+        # Files to always exclude
+        exclude_patterns = [
+            '.gitignore', '.git/', '.github/', '__pycache__/', '.vscode/', '.idea/',
+            'node_modules/', 'dist/', 'build/', 'bin/', 'obj/',
+            '.pyc', '.pyo', '.dll', '.exe', '.o', '.so', '.a', '.lib',
+            '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.ico', '.svg',
+            '.min.js', '.min.css'
+        ]
+        
+        # Important file patterns to keep regardless of extension
+        important_patterns = [
+            'readme', 'license', 'config', 'setup', 'environment',
+            'docker', 'kubernetes', 'deployment', 'ci', 'cd',
+            'requirements.txt', 'package.json', 'gemfile', 'csproj',
+            'main', 'app', 'index', 'server', 'client'
+        ]
+        
+        filtered_files = {}
+        
+        for path, content in repo_files.items():
+            # Skip excluded files
+            if any(exclude in path.lower() for exclude in exclude_patterns):
+                continue
+                
+            # Keep if it's a code file
+            extension = os.path.splitext(path)[1].lower()
+            if extension in code_extensions:
+                filtered_files[path] = content
+                continue
+                
+            # Keep if it matches important patterns
+            if any(pattern in path.lower() for pattern in important_patterns):
+                filtered_files[path] = content
+                continue
+        
+        logger.info(f"Basic filter kept {len(filtered_files)} files out of {len(repo_files)} total")
+        return filtered_files
     
     def _fallback_clustering(self, file_summaries: Dict[str, str], 
                            original_files: Dict[str, str],
