@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 from GithubClient import GithubClient
 from ClaudeBatchProcessor import BatchClaudeAnalyzer
 from RepositoryAnalyzer import RepositoryAnalyzer
-from ClaudeSummarizer import ClaudeSummarizer
+from ClaudeSummarizer import ClaudeSummarizer  # This now uses our updated implementation
 
 # Load environment variables from .env file
 load_dotenv()
@@ -80,7 +80,7 @@ def main():
         
         # Initialize Claude analyzer for batch processing
         batch_analyzer = BatchClaudeAnalyzer(
-            use_prompt_caching= args.prompt_cache
+            use_prompt_caching=args.prompt_cache
         )
         logger.info(f"Using Claude Batch API for analysis with model: {args.claude_model}")
         logger.info(f"Prompt caching: {'enabled' if args.prompt_cache else 'disabled'}")

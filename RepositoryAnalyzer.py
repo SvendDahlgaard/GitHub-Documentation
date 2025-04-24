@@ -7,7 +7,10 @@ from typing import List, Dict, Any, Tuple, Set
 
 from GithubClient import GithubClient
 from BasicSectionCluster import BasicSectionAnalyzer, AnalysisMethod
-from ClaudeSectionCluster import LLMClusterAnalyzer
+# You can either update the import here if you renamed the file:
+from ClaudeSectionCluster import LLMClusterAnalyzer  # Original import
+# Or use this if you're keeping the new file as ImprovedClaudeSectionCluster.py:
+# from ImprovedClaudeSectionCluster import LLMClusterAnalyzer
 from RepositoryCache import RepoCache
 
 logger = logging.getLogger(__name__)
@@ -116,11 +119,12 @@ class RepositoryAnalyzer:
             with open(os.path.join(args.output_dir, "sections.json"), "w") as f:
                 json.dump(section_map, f, indent=2)
             
-            # Summarize each section in batch
-            analyses = self.claude_summarizer.create_summaries_batch(
+            # Summarize each section with improved method
+            analyses = self.claude_summarizer.create_section_summaries(
                 sections, 
                 args.query, 
-                args.use_context
+                args.use_context,
+                model=args.claude_model
             )
             
             # Create the index file

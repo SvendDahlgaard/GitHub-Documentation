@@ -11,10 +11,21 @@ GitHub-Documentation scans repositories, divides them into logical sections, and
 - **Multiple Section Analysis Methods**: Choose from structural, dependency-based, hybrid, or LLM-based clustering algorithms
 - **GitHub API Integration**: Uses PyGithub to interact directly with the GitHub API
 - **Smart Dependency Detection**: Analyzes imports and relationships between files to create logical sections
-- **Claude Batch Processing**: Efficiently processes multiple sections in parallel for faster analysis
+- **Claude Batch Processing**: Efficiently processes multiple sections with context preservation
 - **Smart Context Management**: Maintains and optimizes context between sections
 - **Customizable Documentation**: Configure specific queries for each section
 - **Repository Caching**: Cache repository files to avoid repeated API calls
+
+## Architecture
+
+The tool is built with a clean, modular architecture:
+
+- **BaseClaudeService**: Core functionality for Claude API interactions
+- **ClaudeSummarizer**: Creates comprehensive documentation with context management
+- **LLMClusterAnalyzer**: Uses Claude to intelligently group related files
+- **BasicSectionAnalyzer**: Uses algorithmic methods to group files
+- **RepositoryAnalyzer**: Coordinates the overall analysis process
+- **GithubClient**: Handles GitHub repository access and file extraction
 
 ## Section Analysis Methods
 
@@ -43,18 +54,18 @@ The tool integrates with Claude AI to analyze and document each section. It supp
 - **Latest Claude Models**: Works with Claude 3.5 Haiku, Claude 3.5 Sonnet, and other Claude 3 models
 - **Context Preservation**: Summarizes important information from previous sections to maintain context
 - **Optimized Prompting**: Structures prompts to get the most useful analysis from Claude
-- **Batch Processing**: Processes multiple sections in parallel for efficiency
+- **Batch Processing**: Uses batch API for cost efficiency
 
 ## Usage
 
 ```bash
-python Repo-analyzer.py --owner <github-username> --repo <repository-name> [options]
+python main.py --owner <github-username> --repo <repository-name> [options]
 ```
 
 ### Example
 
 ```bash
-python Repo-analyzer.py --owner SvendDahlgaard --repo GitHub-Documentation --section-method llm_cluster --query "Explain what this section does and how it relates to the rest of the codebase." --use-context
+python main.py --owner SvendDahlgaard --repo GitHub-Documentation --section-method llm_cluster --query "Explain what this section does and how it relates to the rest of the codebase." --use-context
 ```
 
 ### Options
@@ -90,8 +101,17 @@ python github_token_test.py
 python section_analyzer_test.py
 
 # Test batch analyzer
-python batch_analyzer_test.py
+python batch_analyzer_test.py --mock
 
 # Run all tests
 python run_tests.py
 ```
+
+## Extending the Tool
+
+The modular architecture makes it easy to extend:
+
+1. Add new section analysis methods to `BasicSectionAnalyzer.py`
+2. Customize Claude prompts in `BaseClaudeService.py`
+3. Add new file filters in `GithubClient.py`
+4. Create custom documentation formats by modifying the index generation

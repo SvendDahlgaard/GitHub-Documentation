@@ -5,17 +5,17 @@ from typing import Dict, List, Tuple, Set, Optional, Any
 from collections import defaultdict
 import networkx as nx
 
-from ClaudeClientAPI import OptimizedPromptManager
+from BaseClaudeService import BaseClaudeService
 
 logger = logging.getLogger(__name__)
 
-class LLMClusterAnalyzer:
+class LLMClusterAnalyzer(BaseClaudeService):
     """
     Analyze repository files using LLM-based clustering to create logical code sections.
     This approach leverages Claude's code understanding to group files based on functional relationships.
     """
     
-    def __init__(self, batch_analyzer=None, use_cache=True, max_batch_size=10, clustering_model = None):
+    def __init__(self, batch_analyzer=None, use_cache=True, max_batch_size=10, clustering_model=None):
         """
         Initialize the LLM cluster analyzer.
         
@@ -24,7 +24,7 @@ class LLMClusterAnalyzer:
             use_cache: Whether to use caching for clustering results
             max_batch_size: Maximum number of files to process in a batch
         """
-        self.batch_analyzer = batch_analyzer
+        super().__init__(batch_analyzer)
         self.use_cache = use_cache
         self.max_batch_size = max_batch_size
         self.clustering_model = clustering_model or "claude-3-5-haiku-20241022"
@@ -50,16 +50,16 @@ class LLMClusterAnalyzer:
         """
         logger.info("Performing LLM-based clustering analysis")
         
+        # If auto_filter is enabled, filter less important files first
+        if auto_filter:
+            repo_files = self._filter_important_files(repo_files)
+            logger.info(f"Filtered to {len(repo_files)} important files for analysis")
+        
         # Step 1: Create initial grouping by directory (for efficiency)
         dir_groups = defaultdict(dict)
         for path, content in repo_files.items():
             dir_name = os.path.dirname(path) or "root"
             dir_groups[dir_name][path] = content
-
-            # If auto_filter is enabled, filter less important files first
-        if auto_filter:
-            repo_files = self._filter_important_files(repo_files)
-            logger.info(f"Filtered to {len(repo_files)} important files for analysis")
         
         sections = []
         
@@ -111,47 +111,32 @@ class LLMClusterAnalyzer:
             batch = file_paths[i:i+self.max_batch_size]
             logger.info(f"Processing summary batch {i//self.max_batch_size + 1}/{(len(file_paths) + self.max_batch_size - 1)//self.max_batch_size}")
             
-            # Prepare batch sections for the analyzer
-            batch_sections = []
-            
+            # Process each file individually using our base service
             for path in batch:
                 content = files[path]
-                # Create a summarization prompt for this file
-                summary_prompt = self._create_summarization_prompt(path, content)
-                # Add to batch sections with the path as the section name
-                batch_sections.append((path, {"file.txt": content, "prompt.md": summary_prompt}))
-            
-            # Process this batch
-            batch_results = self.batch_analyzer.analyze_sections_batch(batch_sections, 
-                "Summarize this file briefly, focusing on its purpose and relationships to other components.", model = self.clustering_model)
-            
-            # Add results to the overall summaries
-            file_summaries.update(batch_results)
+                
+                # Create a summarization prompt
+                summary_prompt = "Provide a very brief summary focusing only on the primary purpose of this file, key functions/classes, and its relationships with other components."
+                
+                # Format file content
+                file_ext = os.path.splitext(path)[1]
+                file_content = {
+                    "file.txt": f"Path: {path}\nType: {file_ext} file\n\n```\n{content}\n```"
+                }
+                
+                # Analyze using Claude
+                summary = self.analyze_with_claude(
+                    content=file_content,
+                    query=summary_prompt,
+                    section_name=path,
+                    model=self.clustering_model
+                )
+                
+                # Store the summary
+                file_summaries[path] = summary
         
         logger.info(f"Successfully generated {len(file_summaries)} file summaries")
         return file_summaries
-    
-    def _create_summarization_prompt(self, path: str, content: str) -> str:
-        """Create a prompt for file summarization."""
-        # Limit content preview to avoid excessive token usage
-        file_preview = content[:2000] + "..." if len(content) > 2000 else content
-        extension = os.path.splitext(path)[1]
-        
-        return f"""Analyze this file:
-Path: {path}
-Type: {extension} file
-
-Content (preview):
-```
-{file_preview}
-```
-
-Provide a very brief summary focusing only on:
-1. The primary purpose of this file
-2. Key functions, classes, or data structures
-3. Dependencies and relationships with other components
-
-Keep your response short and focused on technical details only."""
     
     def _generate_clusters(self, dir_name: str, file_summaries: Dict[str, str], 
                          original_files: Dict[str, str],
@@ -181,22 +166,18 @@ Keep your response short and focused on technical details only."""
         min_clusters = max(2, (total_files + max_cluster_size - 1) // max_cluster_size)
         max_clusters = max(3, min(total_files // 2, 10))  # Don't create too many small clusters
         
-        # The clustering prompt - optimized for Claude to return structured data
-        clustering_prompt = f"""Below are summaries of files in the '{dir_name}' directory:
+        # The clustering prompt with clear JSON output instructions
+        clustering_prompt = f"""You are helping analyze a codebase for documentation purposes.
+Based on these file summaries from the '{dir_name}' directory, group these files into logical clusters of related functionality.
 
 {summary_text}
 
-Based on these summaries, group these files into logical clusters of related functionality.
 Rules:
 1. Create between {min_clusters} and {max_clusters} distinct clusters
 2. No cluster should contain more than {max_cluster_size} files
-3. Group files based on:
-   - Functional relationships (files that work together)
-   - Shared dependencies
-   - Similar purposes
+3. Group files based on functional relationships, shared dependencies, and similar purposes
 
-Format your response as a valid JSON object with cluster names as keys and arrays of file paths as values:
-
+Format your response as a valid JSON object with cluster names as keys and arrays of file paths as values. Example:
 ```json
 {{
   "cluster_name_1": ["file/path1.py", "file/path2.py"],
@@ -206,32 +187,47 @@ Format your response as a valid JSON object with cluster names as keys and array
 
 Choose descriptive cluster names that reflect the purpose of the grouped files.
 """
+
+        # Prepare content for Claude
+        content = {"clustering_request.md": clustering_prompt}
         
-        # Create a single section for the clustering request
-        clustering_section = [(f"cluster_{dir_name}", {"clustering_prompt.md": clustering_prompt})]
+        # Get clustering from Claude
+        clustering_response = self.analyze_with_claude(
+            content=content,
+            query="Group these files into logical clusters based on functionality.",
+            section_name=f"cluster_{dir_name}",
+            model=self.clustering_model
+        )
         
-        #clustering_model = "claude-3-5-haiku-20241022"
-        # Use the batch analyzer to get the clustering result
-        result = self.batch_analyzer.analyze_sections_batch(
-            sections = clustering_section, 
-            query = "Group these files into logical clusters based on functionality.",
-            model = self.clustering_model
-            )
-        
-        # Extract JSON response (with error handling)
+        # Extract JSON from response
         try:
-            clustering_response = result.get(f"cluster_{dir_name}", "")
-            # Extract JSON from response
-            json_str = OptimizedPromptManager.extract_json(clustering_response)
-            clusters = json.loads(json_str)
+            # Find JSON block in the response
+            json_start = clustering_response.find('{')
+            json_end = clustering_response.rfind('}') + 1
             
-            logger.info(f"Successfully generated {len(clusters)} clusters")
-            return clusters
+            if json_start >= 0 and json_end > json_start:
+                json_str = clustering_response[json_start:json_end]
+                clusters = json.loads(json_str)
+                logger.info(f"Successfully generated {len(clusters)} clusters")
+                return clusters
+            else:
+                # Try to find JSON in code blocks
+                import re
+                json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', 
+                                    clustering_response, re.DOTALL)
+                if json_match:
+                    clusters = json.loads(json_match.group(1))
+                    logger.info(f"Successfully extracted {len(clusters)} clusters from code block")
+                    return clusters
+                
+                logger.error("Could not find JSON in the response")
+                return self._fallback_clustering(file_summaries, original_files, max_cluster_size)
+                
         except Exception as e:
             logger.error(f"Error parsing clustering result: {e}")
             # Fallback to simple clustering
             return self._fallback_clustering(file_summaries, original_files, max_cluster_size)
-        
+    
     def _filter_important_files(self, repo_files: Dict[str, str]) -> Dict[str, str]:
         """
         Use Claude to determine which files are most important for documentation.
@@ -255,63 +251,71 @@ Choose descriptive cluster names that reflect the purpose of the grouped files.
                 "preview": content[:300] + "..." if len(content) > 300 else content
             })
         
-        # Create batch of metadata for analysis
+        # Create metadata JSON for Claude
         metadata_json = json.dumps(file_metadata)
         
         # Create a prompt for Claude to evaluate file importance
         importance_prompt = f"""You are helping analyze a codebase for documentation purposes.
-    Below is metadata about files in the repository. Determine which files are most important
-    to include in documentation and which can be safely excluded.
+Below is metadata about files in the repository. Determine which files are most important
+to include in documentation and which can be safely excluded.
 
-    Important files typically include:
-    - Core functionality and business logic
-    - Main interfaces and APIs
-    - Configuration and setup files
-    - Type definitions and data models
+Important files typically include:
+- Core functionality and business logic
+- Main interfaces and APIs
+- Configuration and setup files
+- Type definitions and data models
 
-    Less important files typically include:
-    - Auto-generated code
-    - Trivial configuration files (like .gitignore)
-    - Test fixtures and test output
-    - Duplicate or near-duplicate files
-    - Very small utility files with minimal content
+Less important files typically include:
+- Auto-generated code
+- Trivial configuration files (like .gitignore)
+- Test fixtures and test output
+- Duplicate or near-duplicate files
+- Very small utility files with minimal content
 
-    File metadata:
-    {metadata_json}
+File metadata:
+{metadata_json}
 
-    Return a JSON array of paths for files that SHOULD be included in documentation.
-    Format: ["file1.py", "file2.js", ...]
-    """
+Return a JSON array of paths for files that SHOULD be included in documentation.
+Format: ["file1.py", "file2.js", ...]
+"""
         
-        # Create a single section for the importance evaluation
-        importance_section = [("file_importance", {"importance_prompt.md": importance_prompt})]
+        # Prepare content for Claude
+        content = {"importance_evaluation.md": importance_prompt}
         
-        # Use the batch analyzer to get the evaluation
-        result = self.batch_analyzer.analyze_sections_batch(
-            importance_section, 
-            "Evaluate which files are most important for documentation.",
-            model = self.clustering_model
+        # Get evaluation from Claude
+        importance_response = self.analyze_with_claude(
+            content=content,
+            query="Evaluate which files are most important for documentation.",
+            section_name="file_importance",
+            model=self.clustering_model
         )
         
-        # Extract JSON response (with error handling)
+        # Extract JSON array from response
         try:
-            importance_response = result.get("file_importance", "")
-            # Extract JSON array from response
-            json_str = OptimizedPromptManager.extract_json(importance_response)
-            important_paths = json.loads(json_str)
+            # Try to find array in response
+            import re
+            array_match = re.search(r'\[(.*?)\]', importance_response, re.DOTALL)
             
-            # Filter repo_files to only include important paths
-            important_files = {path: content for path, content in repo_files.items() 
-                            if path in important_paths}
-            
-            logger.info(f"Identified {len(important_files)} important files out of {len(repo_files)} total")
-            
-            # If too few files were selected, return all files
-            if len(important_files) < 0.3 * len(repo_files):
-                logger.warning("Too few important files identified, using all files")
+            if array_match:
+                array_str = array_match.group(0)
+                important_paths = json.loads(array_str)
+                
+                # Filter repo_files to only include important paths
+                important_files = {path: content for path, content in repo_files.items() 
+                                if path in important_paths}
+                
+                logger.info(f"Identified {len(important_files)} important files out of {len(repo_files)} total")
+                
+                # If too few files were selected, return all files
+                if len(important_files) < 0.3 * len(repo_files):
+                    logger.warning("Too few important files identified, using all files")
+                    return repo_files
+                    
+                return important_files
+            else:
+                logger.error("Could not find JSON array in the response")
                 return repo_files
                 
-            return important_files
         except Exception as e:
             logger.error(f"Error determining file importance: {e}")
             # Fall back to using all files
@@ -488,6 +492,7 @@ Choose descriptive cluster names that reflect the purpose of the grouped files.
             
             # List the files in this section
             toc_parts.append("**Files:**\n\n")
+            
             for path in sorted(files.keys()):
                 toc_parts.append(f"- `{path}`\n")
             toc_parts.append("\n")

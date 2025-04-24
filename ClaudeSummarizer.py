@@ -1,134 +1,165 @@
 import os
 import logging
-import re
-from typing import List, Dict, Tuple, Any
+import time
+from typing import List, Dict, Tuple, Any, Optional
+from BaseClaudeService import BaseClaudeService
 
 logger = logging.getLogger(__name__)
 
-class ClaudeSummarizer:
+class ClaudeSummarizer(BaseClaudeService):
     """
-    Handles all Claude-related summarization and analysis functionality,
-    including batch processing and context management between sections.
+    Handles Claude-based summarization of code sections with context preservation
+    between sections.
     """
 
-    def __init__(self, batch_analyzer, output_dir = "analysis"):
+    def __init__(self, batch_analyzer, output_dir="analysis"):
         """
         Initialize the Claude summarizer.
         
         Args:
-            batch_analyzer: BatchClaudeAnalyzer instance for efficient LLM queries
+            batch_analyzer: BatchClaudeAnalyzer instance for Claude API calls
             output_dir: Directory to output analysis files
         """
-        self.batch_analyzer = batch_analyzer
+        super().__init__(batch_analyzer)
         self.output_dir = output_dir
         os.makedirs(output_dir, exist_ok=True)
-
-    def create_summaries_batch(self, sections, query, use_context = True, model = "claude-3-5-sonnet-20240307"):
-         """
-        Analyze all sections in a batch for efficiency.
+        
+    def create_section_summaries(self, 
+                               sections: List[Tuple[str, Dict[str, str]]], 
+                               query: str = None,
+                               use_context: bool = True,
+                               model: str = "claude-3-5-haiku-20241022") -> Dict[str, str]:
+        """
+        Create comprehensive summaries for each section, with optional context
+        preservation between sections.
         
         Args:
             sections: List of tuples (section_name, files)
             query: Question to ask Claude about each section
-            use_context: Whether to use context from previous sections
-            model: Claude model to use for analysis
+            use_context: Whether to use insights from previous sections as context
+            model: Claude model to use
             
         Returns:
-            Dictionary mapping section names to analysis results
+            Dictionary mapping section names to summaries
         """
-         analyses = {}
-         if not use_context:
-             #Simple case: Anlyze all blocks in one bathc without context
-             logger.info(f"Analyze all {len(sections)} sections in a single batch")
-             try:
-                 analyses = self.batch_analyzer.analyse_sections_batch(
-                     sections = sections,
-                     query = query,
-                     model = model
-                 )
-                 logger.info(f"Successfully analyzed {len(sections)} sections in a single batch")
-             except Exception as e:
-                 logger.error(f"Exception in analyze_sections_batch: {type(e).__name__}: {str(e)}") 
-                 import traceback 
-                 traceback.print_exc()
-                 raise
-         else: 
-            # More complex case: analyze in chunks to maintain context between groups
-            # Group sections into chunks of 5-10 for efficient batching while maintaining context flow
-            chunk_size = 5
-            sections_chunks = [sections[i:i+chunk_size] for i in range(0, len(sections), chunk_size)]
-
-            context_map = {}
-            context = ""
-
-            for chunk_idx, chunk in enumerate(sections_chunks):
-                logger.info(f"Processing batch chunk {chunk_idx+1}/{len(sections_chunks)} ({len(chunk)} sections)")
-
-                # Prepare context for each section in this chunk
-                for section_name, _ in chunk:
-                    context_map[section_name] = context.strip()
-
-                # Process this chunk as a batch
-                chunk_results = self.batch_analyzer.analyze_sections_batch(
-                    chunk, 
-                    query=query, 
-                    context_map=context_map, 
-                    model=model
-                )
-                analyses.update(chunk_results)
-
-                # Update context for the next chunk
-                for section_name, section_files in chunk:
-                    if section_name in chunk_results:
-                        analysis = chunk_results[section_name]
-
-                        # Save individual section analysis
-                        section_filename = section_name.replace('/', '_').replace('\\', '_')
-                        with open(os.path.join(self.output_dir, f"{section_filename}.md"), "w") as f:
-                            f.write(f"# {section_name}\n\n")
-                            f.write(analysis)
-                        
-                        # Extract key points for context
-                        key_points = self._extract_key_points(analysis)
-                        context += f"\n\nSection '{section_name}':\n{key_points}\n"
-                        # Keep context from getting too large
-                        context = context[-10000:] if len(context) > 10000 else context
-         return analyses
-    def _extract_key_points(self, text, max_points=5):
+        # Default query if none provided
+        if not query:
+            query = "Analyze this section of code. Explain its purpose, key components, and how it fits into the larger codebase."
+            
+        analyses = {}
+        accumulated_context = ""
+        
+        logger.info(f"Starting analysis of {len(sections)} sections with{' context' if use_context else 'out context'}")
+        
+        # Process sections sequentially
+        for i, (section_name, files) in enumerate(sections):
+            logger.info(f"Processing section {i+1}/{len(sections)}: {section_name} ({len(files)} files)")
+            
+            # Format files for Claude
+            section_content = self._format_files_for_claude(files)
+            
+            # Get context for this section if enabled
+            context = None
+            if use_context and accumulated_context:
+                context = f"Previously analyzed sections revealed: {accumulated_context}"
+            
+            # Enhance query with contextual guidance if we have context
+            effective_query = query
+            if context:
+                effective_query = f"{query}\n\nConsider these insights from other sections: {accumulated_context}"
+            
+            # Analyze the section
+            result = self.analyze_with_claude(
+                content=section_content,
+                query=effective_query,
+                section_name=section_name,
+                context=context,
+                model=model
+            )
+            
+            # Store the result
+            analyses[section_name] = result
+            
+            # Save to file
+            self._save_analysis(section_name, result)
+            
+            # Update accumulated context if this wasn't an error
+            if not result.startswith("Analysis failed:") and use_context:
+                context_extract = self.extract_context(result)
+                accumulated_context += f"\n\n{section_name}: {context_extract}"
+                # Keep context from getting too large
+                if len(accumulated_context) > 6000:
+                    accumulated_context = accumulated_context[-6000:]
+            
+            # Small delay between requests to avoid rate limiting
+            if i < len(sections) - 1:
+                time.sleep(1)
+                
+        logger.info(f"Completed analysis of {len(sections)} sections")
+        return analyses
+    
+    def _format_files_for_claude(self, files: Dict[str, str]) -> Dict[str, str]:
         """
-        Extract key points from analysis for context.
+        Format files in a way that's optimal for Claude to analyze.
         
         Args:
-            text: The analysis text to extract key points from
-            max_points: Maximum number of key points to extract
+            files: Dictionary mapping file paths to contents
             
         Returns:
-            String with extracted key points
+            Dictionary with formatted content
         """
-        # Simple extraction of sentences with key indicators
-        key_sentences = []
-        sentences = re.split(r'(?<=[.!?])\s+', text)
-
-        # Simple extraction of sentences with key indicators
-        key_sentences = []
-        sentences = re.split(r'(?<=[.!?])\s+', text)
+        formatted_output = {}
         
-        # Look for sentences with indicators of importance
-        indicators = ['main', 'primary', 'key', 'core', 'critical', 'essential', 'important']
-        for sentence in sentences:
-            if any(indicator in sentence.lower() for indicator in indicators):
-                key_sentences.append(sentence)
-                
-            if len(key_sentences) >= max_points:
-                break
-                
-        # If not enough key sentences found, take first few sentences
-        if len(key_sentences) < 3:
-            key_sentences = sentences[:5]
+        # Create a combined file listing with syntax highlighting
+        files_content = ""
+        for path, content in files.items():
+            # Determine file extension for syntax highlighting
+            ext = os.path.splitext(path)[1].lower()
             
-        return " ".join(key_sentences)
+            # Map common extensions to language for syntax highlighting
+            lang = ""
+            if ext in ['.py', '.pyw']:
+                lang = "python"
+            elif ext in ['.js', '.jsx', '.ts', '.tsx']:
+                lang = "javascript"
+            elif ext in ['.html', '.htm']:
+                lang = "html"
+            elif ext in ['.css']:
+                lang = "css"
+            elif ext in ['.json']:
+                lang = "json"
+            elif ext in ['.md', '.markdown']:
+                lang = "markdown"
+            elif ext in ['.c', '.cpp', '.h', '.hpp']:
+                lang = "cpp"
+            elif ext in ['.java']:
+                lang = "java"
+            elif ext in ['.rb']:
+                lang = "ruby"
+            
+            # Add the file with syntax highlighting
+            files_content += f"\n\n## File: {path}\n```{lang}\n{content}\n```\n"
+        
+        formatted_output["code_files.md"] = f"# Code Files\n{files_content}"
+        return formatted_output
     
-
-
-
-         
+    def _save_analysis(self, section_name: str, analysis: str) -> None:
+        """
+        Save a section analysis to a markdown file.
+        
+        Args:
+            section_name: Name of the section
+            analysis: Analysis result to save
+        """
+        try:
+            # Create a safe filename
+            section_filename = section_name.replace('/', '_').replace('\\', '_')
+            filepath = os.path.join(self.output_dir, f"{section_filename}.md")
+            
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write(f"# {section_name}\n\n")
+                f.write(analysis)
+                
+            logger.info(f"Saved analysis for '{section_name}' to {filepath}")
+        except Exception as e:
+            logger.error(f"Failed to save analysis for '{section_name}': {str(e)}")
