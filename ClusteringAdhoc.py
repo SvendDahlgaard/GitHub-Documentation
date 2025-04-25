@@ -72,7 +72,7 @@ class BasicSectionAnalyzer(BaseRepositoryAnalyzer):
         return sections
     
     def structural_analysis(self, repo_files: Dict[str, str], 
-                          max_section_size: int = 15) -> List[Tuple[str, Dict[str, str]]]:
+                        max_section_size: int = 15) -> List[Tuple[str, Dict[str, str]]]:
         """
         Automatically identify logical sections based on directory structure.
         
@@ -83,37 +83,20 @@ class BasicSectionAnalyzer(BaseRepositoryAnalyzer):
         Returns:
             List of tuples (section_name, {file_path: content})
         """
-        # Group files by directory structure first
+        # Group files by directory structure
         dir_sections = defaultdict(dict)
         
         for path, content in repo_files.items():
-            # Get the top-level directory or second-level if first is too broad
-            parts = Path(path).parts
-            if len(parts) >= 2:
-                # Use first directory level
-                section = parts[0]
-                
-                # If there are too many files in this top level, use two levels
-                if len(dir_sections[section]) > max_section_size and len(parts) >= 3:
-                    section = f"{parts[0]}/{parts[1]}"
-            else:
-                section = "root"
+            # Get the directory path
+            dir_path = str(Path(path).parent)
+            if not dir_path:  # Files in root directory
+                dir_path = "root"
             
-            dir_sections[section][path] = content
-        
-        # Further divide large sections based on file types or naming patterns
-        refined_sections = []
-        for section, files in dir_sections.items():
-            if len(files) <= max_section_size:
-                # Keep small sections as is
-                refined_sections.append((section, files))
-            else:
-                # For larger sections, try to subdivide
-                type_sections = self._subdivide_section(section, files, max_section_size)
-                refined_sections.extend(type_sections)
+            # Add file to its directory section
+            dir_sections[dir_path][path] = content
         
         # Sort sections by name for consistent output
-        return sorted(refined_sections, key=lambda x: x[0])
+        return sorted([(section, files) for section, files in dir_sections.items()], key=lambda x: x[0])
     
     def dependency_analysis(self, repo_files: Dict[str, str], 
                           max_section_size: int = 15) -> List[Tuple[str, Dict[str, str]]]:

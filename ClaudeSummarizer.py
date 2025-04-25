@@ -39,6 +39,7 @@ class ClaudeSummarizer(BaseClaudeService):
                                sections: List[Tuple[str, Dict[str, str]]], 
                                query: str = None,
                                use_context: bool = True,
+                               use_batch: bool = True,
                                model: str = "claude-3-5-haiku-20241022") -> Dict[str, str]:
         """
         Create comprehensive summaries for each section, with optional context
@@ -85,6 +86,7 @@ class ClaudeSummarizer(BaseClaudeService):
                 query=effective_query,
                 section_name=section_name,
                 context=context,
+                use_batch= use_batch,
                 model=model
             )
             

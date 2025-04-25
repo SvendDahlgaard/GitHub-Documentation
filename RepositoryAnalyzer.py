@@ -126,6 +126,7 @@ class RepositoryAnalyzer:
                 sections, 
                 args.query, 
                 args.use_context,
+                use_batch = args.batch,
                 model=args.claude_model
             )
             

@@ -63,6 +63,8 @@ def parse_arguments():
                         help="Enable verbose logging")
     parser.add_argument("--auto-filter", default=True,
                         help="Determines whether to use automatic filtering of less important files")
+    parser.add_argument("--batch", action="store_true",
+                   help="Disable batch processing and use direct API calls")
     
     return parser.parse_args()
 
