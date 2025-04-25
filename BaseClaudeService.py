@@ -1,4 +1,5 @@
 import os
+import backoff
 import logging
 import time
 import requests as req  # Add this import
@@ -21,6 +22,86 @@ class BaseClaudeService:
         """
         self.batch_analyzer = batch_analyzer
     
+    def _analyze_with_retry(self, content: Dict[str, str], query: str, 
+                       section_name: str, context: Optional[str], 
+                       model: str, use_batch: bool) -> str:
+        """
+        Wrapper for analyze_with_claude with exponential backoff for rate limiting.
+        
+        Args:
+            content: Dictionary mapping file paths to contents
+            query: Question to ask Claude about the content
+            section_name: Name of the section (for logging)
+            context: Optional context from previous analyses
+            model: Claude model to use
+            use_batch: Whether to use batch processing
+            
+        Returns:
+            Analysis result from Claude
+        """
+        # Define backoff handler for rate limit errors
+        @backoff.on_exception(
+            backoff.expo,
+            Exception,  # This is broad, but we'll filter in the giveup function
+            max_tries=8,  # Maximum number of retries
+            max_time=600,  # Maximum time to retry (10 minutes)
+            giveup=lambda e: not (
+                isinstance(e, Exception) and 
+                hasattr(e, 'response') and 
+                hasattr(e.response, 'status_code') and 
+                e.response.status_code == 429
+            ),
+            on_backoff=lambda details: logger.warning(
+                f"Rate limit hit. Retrying in {details['wait']:.1f} seconds... "
+                f"(Attempt {details['tries']})"
+            )
+        )
+        def _call_with_backoff():
+            try:
+                if use_batch:
+                    # Format the section for Claude
+                    section = [(section_name, content)]
+                    
+                    # Create context map if context provided
+                    context_map = None
+                    if context:
+                        context_map = {section_name: context}
+                    
+                    # Send to Claude using batch analyzer
+                    results = self.batch_analyzer.analyze_sections_batch(
+                        sections=section,
+                        query=query,
+                        context_map=context_map,
+                        model=model
+                    )
+                    
+                    # Extract result
+                    if results and section_name in results:
+                        analysis = results[section_name]
+                        return analysis
+                    else:
+                        raise Exception(f"No result returned for {section_name}")
+                else:
+                    # Use direct API
+                    return self._analyze_with_direct_api(content, query, section_name, context, model)
+            except Exception as e:
+                # Log the exception
+                if hasattr(e, 'response') and hasattr(e.response, 'status_code') and e.response.status_code == 429:
+                    logger.error(f"Rate limit exceeded: {str(e)}")
+                    # Re-raise for backoff to catch
+                    raise e
+                # For other errors, just return an error message
+                logger.error(f"Error in _call_with_backoff: {str(e)}")
+                return f"Analysis failed: {str(e)}"
+        
+        try:
+            # Call with backoff
+            return _call_with_backoff()
+        except Exception as e:
+            logger.error(f"Final error after retries: {str(e)}")
+            return f"Analysis failed after multiple retries: {str(e)}"
+
+    # Update analyze_with_claude to use the retry mechanism
     def analyze_with_claude(self, 
                         content: Dict[str, str], 
                         query: str, 
@@ -45,48 +126,70 @@ class BaseClaudeService:
             Analysis result from Claude
         """
         try:
-            # If batching is disabled or we're processing a small section, use direct API
-            if not use_batch:
-                return self._analyze_with_direct_api(content, query, section_name, context, model)
-                
-            # Try batch processing first with a timeout
-            start_time = time.time()
+            # Check if content is too large and split if necessary
+            estimated_tokens = sum(len(content) for content in content.values()) // 4
             
-            # Format the section for Claude
-            section = [(section_name, content)]
-            
-            # Create context map if context provided
-            context_map = None
-            if context:
-                context_map = {section_name: context}
-            
-            # Send to Claude using batch analyzer with timeout tracking
-            results = None
-            try:
-                results = self.batch_analyzer.analyze_sections_batch(
-                    sections=section,
-                    query=query,
-                    context_map=context_map,
-                    model=model,
-                    timeout=batch_timeout
-                )
-            except TimeoutError:
-                logger.warning(f"Batch processing timed out after {batch_timeout}s, falling back to direct API")
-                return self._analyze_with_direct_api(content, query, section_name, context, model)
+            if estimated_tokens > 150000:  # Set a threshold below Claude's limit
+                logger.info(f"Section {section_name} is large (est. {estimated_tokens} tokens), splitting into batches")
                 
-            # Extract result
-            if results and section_name in results:
-                analysis = results[section_name]
+                # Split content into smaller batches
+                content_batches = self._split_large_section(content)
                 
-                # Check if we got an error
-                if analysis.startswith("Error:"):
-                    logger.error(f"Error analyzing {section_name}: {analysis}")
-                    return f"Analysis failed: {analysis}"
-                
-                return analysis
-            else:
-                logger.error(f"No result returned for {section_name}")
-                return "Analysis failed: No result returned"
+                if len(content_batches) > 1:
+                    logger.info(f"Split {section_name} into {len(content_batches)} batches")
+                    
+                    # Process each batch
+                    all_results = []
+                    for i, batch_content in enumerate(content_batches):
+                        batch_name = f"{section_name}_batch_{i+1}"
+                        logger.info(f"Processing {batch_name} with {len(batch_content)} files")
+                        
+                        # Add batch info to query
+                        batch_query = f"{query}\n\nNote: This is batch {i+1} of {len(content_batches)} for section '{section_name}'."
+                        
+                        # If not the first batch, include context from previous analyses
+                        batch_context = context
+                        if i > 0 and all_results:
+                            # Combine original context with results from previous batches
+                            previous_results = "\n\n".join(all_results)
+                            batch_context = f"{context if context else ''}\n\nResults from previous batches of this section: {previous_results}"
+                        
+                        # Analyze this batch with retry mechanism
+                        result = self._analyze_with_retry(
+                            batch_content, 
+                            batch_query, 
+                            batch_name, 
+                            batch_context, 
+                            model, 
+                            use_batch
+                        )
+                        
+                        all_results.append(result)
+                    
+                    # Combine results from all batches
+                    # For the final batch, ask Claude to synthesize the full analysis
+                    combined_content = {"summary.md": "\n\n".join(all_results)}
+                    synthesis_query = f"""The following contains partial analyses of section '{section_name}' that was split into {len(content_batches)} batches due to size.
+                    
+    Please synthesize these partial analyses into a single coherent analysis that covers the entire section. Focus on:
+    1. The overall purpose and functionality of the section
+    2. Key classes, functions, and design patterns across all batches
+    3. How this section relates to the rest of the codebase
+    4. Important implementation details and technical considerations"""
+                    
+                    final_result = self._analyze_with_retry(
+                        combined_content, 
+                        synthesis_query, 
+                        f"{section_name}_synthesis", 
+                        None, 
+                        model, 
+                        False  # Use direct API for synthesis
+                    )
+                    
+                    return final_result
+                    
+            # If we're not splitting, use the retry mechanism
+            return self._analyze_with_retry(content, query, section_name, context, model, use_batch)
                 
         except Exception as e:
             logger.error(f"Exception analyzing {section_name}: {str(e)}")
